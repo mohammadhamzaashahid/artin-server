@@ -1,0 +1,130 @@
+import dotenv from "dotenv";
+import { z } from "zod";
+
+dotenv.config();
+
+const envSchema = z.object({
+  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  PORT: z.coerce.number().default(5000),
+
+  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  CLIENT_URL: z.string().url("CLIENT_URL must be a valid URL"),
+
+  JWT_ACCESS_SECRET: z.string().min(30, "JWT_ACCESS_SECRET must be strong"),
+  JWT_REFRESH_SECRET: z.string().min(30, "JWT_REFRESH_SECRET must be strong"),
+  JWT_ACCESS_EXPIRES_IN: z.string().default("15m"),
+  JWT_REFRESH_EXPIRES_IN: z.string().default("7d"),
+
+  COOKIE_SECURE: z
+    .string()
+    .default("false")
+    .transform((value) => value === "true"),
+
+  EMAIL_PROVIDER: z.enum(["console", "resend", "smtp"]).default("console"),
+  EMAIL_FROM_NAME: z.string().min(1).default("Course Platform"),
+  EMAIL_FROM_EMAIL: z.string().email().default("noreply@example.com"),
+  SUPPORT_EMAIL: z.string().email().default("support@example.com"),
+
+  RESEND_API_KEY: z.string().optional().default(""),
+
+  SMTP_HOST: z.string().optional().default(""),
+  SMTP_PORT: z.coerce.number().optional().default(587),
+  SMTP_SECURE: z
+    .string()
+    .default("false")
+    .transform((value) => value === "true"),
+  SMTP_USER: z.string().optional().default(""),
+  SMTP_PASS: z.string().optional().default(""),
+
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().default(15 * 60 * 1000),
+  RATE_LIMIT_MAX: z.coerce.number().default(300),
+
+  AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().default(15 * 60 * 1000),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().default(20),
+
+  OTP_RATE_LIMIT_WINDOW_MS: z.coerce.number().default(15 * 60 * 1000),
+  OTP_RATE_LIMIT_MAX: z.coerce.number().default(5),
+
+  PASSWORD_RESET_RATE_LIMIT_WINDOW_MS: z.coerce.number().default(15 * 60 * 1000),
+  PASSWORD_RESET_RATE_LIMIT_MAX: z.coerce.number().default(5),
+
+  R2_ACCOUNT_ID: z.string().optional().default(""),
+  R2_ACCESS_KEY_ID: z.string().optional().default(""),
+  R2_SECRET_ACCESS_KEY: z.string().optional().default(""),
+  R2_BUCKET_NAME: z.string().optional().default(""),
+  R2_ENDPOINT: z.string().url().optional().or(z.literal("")).default(""),
+  R2_PUBLIC_BASE_URL: z.string().optional().default(""),
+  R2_SIGNED_UPLOAD_EXPIRES_SECONDS: z.coerce.number().default(900),
+  R2_SIGNED_PLAYBACK_EXPIRES_SECONDS: z.coerce.number().default(300),
+
+  STRIPE_SECRET_KEY: z.string().optional().default(""),
+  STRIPE_PUBLISHABLE_KEY: z.string().optional().default(""),
+  STRIPE_WEBHOOK_SECRET: z.string().optional().default(""),
+  STRIPE_SUCCESS_URL: z
+    .string()
+    .url()
+    .optional()
+    .default("http://localhost:3000/payment/success?session_id={CHECKOUT_SESSION_ID}"),
+  STRIPE_CANCEL_URL: z
+    .string()
+    .url()
+    .optional()
+    .default("http://localhost:3000/payment/cancel"),
+  STRIPE_CUSTOMER_PORTAL_RETURN_URL: z
+    .string()
+    .url()
+    .optional()
+    .default("http://localhost:3000/profile/billing"),
+});
+
+const parsed = envSchema.safeParse(process.env);
+
+if (!parsed.success) {
+  console.error("Invalid environment variables:");
+  console.error(parsed.error.flatten().fieldErrors);
+  process.exit(1);
+}
+
+const env = parsed.data;
+
+if (env.EMAIL_PROVIDER === "resend" && !env.RESEND_API_KEY) {
+  console.error("RESEND_API_KEY is required when EMAIL_PROVIDER=resend");
+  process.exit(1);
+}
+
+if (env.EMAIL_PROVIDER === "smtp") {
+  const missing = [];
+
+  if (!env.SMTP_HOST) missing.push("SMTP_HOST");
+  if (!env.SMTP_USER) missing.push("SMTP_USER");
+  if (!env.SMTP_PASS) missing.push("SMTP_PASS");
+
+  if (missing.length > 0) {
+    console.error(`Missing SMTP environment variables: ${missing.join(", ")}`);
+    process.exit(1);
+  }
+}
+
+const isR2Configured =
+  env.R2_ACCOUNT_ID &&
+  env.R2_ACCESS_KEY_ID &&
+  env.R2_SECRET_ACCESS_KEY &&
+  env.R2_BUCKET_NAME &&
+  env.R2_ENDPOINT;
+
+if (env.NODE_ENV !== "test" && !isR2Configured) {
+  console.warn(
+    "Cloudflare R2 is not fully configured. Media upload/playback APIs will fail until R2 env values are set."
+  );
+}
+
+const isStripeConfigured =
+  env.STRIPE_SECRET_KEY && env.STRIPE_PUBLISHABLE_KEY && env.STRIPE_WEBHOOK_SECRET;
+
+if (env.NODE_ENV !== "test" && !isStripeConfigured) {
+  console.warn(
+    "Stripe is not fully configured. Payment APIs/webhooks will fail until Stripe env values are set."
+  );
+}
+
+export { env };
