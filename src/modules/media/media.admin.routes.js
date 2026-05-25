@@ -13,6 +13,7 @@ import {
   createUploadUrlByAdmin,
   deleteMediaAssetByAdmin,
   getMediaAssetByAdmin,
+  getMediaAssetPreviewUrlByAdmin,
   listMediaAssetsByAdmin,
 } from "./media.controller.js";
 
@@ -21,6 +22,7 @@ const router = Router();
 router.post("/create-upload-url", validate(createUploadUrlSchema), createUploadUrlByAdmin);
 router.post("/complete-upload", validate(completeUploadSchema), completeUploadByAdmin);
 router.get("/", validate(listMediaAssetsSchema), listMediaAssetsByAdmin);
+router.get("/:mediaAssetId/preview-url", validate(mediaAssetIdParamSchema), getMediaAssetPreviewUrlByAdmin);
 router.get("/:mediaAssetId", validate(mediaAssetIdParamSchema), getMediaAssetByAdmin);
 router.delete("/:mediaAssetId", validate(mediaAssetIdParamSchema), deleteMediaAssetByAdmin);
 

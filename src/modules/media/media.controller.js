@@ -7,6 +7,9 @@ import {
   deleteMediaAsset,
   getLecturePlaybackUrl,
   getMediaAssetById,
+  getMediaAssetPreviewUrl,
+  getPublicCourseImagePreviewByCourse,
+  getPublicCourseImagePreviewUrl,
   listMediaAssets,
 } from "./media.service.js";
 
@@ -72,6 +75,33 @@ export const getMediaAssetByAdmin = asyncHandler(async (req, res) => {
   return res.status(200).json(new ApiResponse(200, { mediaAsset }, "Media asset fetched successfully"));
 });
 
+export const getMediaAssetPreviewUrlByAdmin = asyncHandler(async (req, res) => {
+  const { mediaAssetId } = req.validated.params;
+
+  const result = await getMediaAssetPreviewUrl(mediaAssetId);
+
+  return res.status(200).json(new ApiResponse(200, result, "Media preview URL generated successfully"));
+});
+
+export const getPublicCourseImagePreviewUrlController = asyncHandler(async (req, res) => {
+  const { mediaAssetId } = req.validated.params;
+
+  const result = await getPublicCourseImagePreviewUrl(mediaAssetId);
+
+  return res.status(200).json(new ApiResponse(200, result, "Course image preview URL generated successfully"));
+});
+
+export const getPublicCourseImagePreviewByCourseController = asyncHandler(async (req, res) => {
+  const { slug, imageType } = req.validated.params;
+
+  const result = await getPublicCourseImagePreviewByCourse({
+    slug,
+    imageType,
+  });
+
+  return res.status(200).json(new ApiResponse(200, result, "Course image preview URL generated successfully"));
+});
+
 export const deleteMediaAssetByAdmin = asyncHandler(async (req, res) => {
   const { mediaAssetId } = req.validated.params;
 
@@ -95,7 +125,7 @@ export const getLecturePlaybackUrlController = asyncHandler(async (req, res) => 
   const { lectureId } = req.validated.params;
 
   const result = await getLecturePlaybackUrl({
-    userId: req.user.id,
+    userId: req.user?.id || null,
     lectureId,
   });
 

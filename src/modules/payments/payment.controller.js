@@ -6,6 +6,7 @@ import ApiError from "../../utils/ApiError.js";
 import {
   createCheckoutSession,
   createCustomerPortalSession,
+  getCheckoutSessionStatus,
   getMyAccessibleCourses,
   listMyPurchases,
   listMySubscriptions,
@@ -74,6 +75,19 @@ export const listMyCoursesController = asyncHandler(async (req, res) => {
   return res
     .status(200)
     .json(new ApiResponse(200, result, "Accessible courses fetched successfully"));
+});
+
+export const getSessionStatusController = asyncHandler(async (req, res) => {
+  const { query } = req.validated;
+
+  const result = await getCheckoutSessionStatus({
+    userId: req.user.id,
+    sessionId: query.sessionId,
+  });
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, result, "Session status fetched successfully"));
 });
 
 export const stripeWebhookController = asyncHandler(async (req, res) => {

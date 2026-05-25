@@ -3,6 +3,10 @@ import ApiError from "../../utils/ApiError.js";
 import { buildPaginationMeta, getPagination } from "../../utils/pagination.js";
 import { buildUniqueSlug, slugify } from "../../utils/slug.js";
 import { buildLectureAccessView, getCourseAccessForUser } from "../access/access.service.js";
+import {
+  formatMediaAssetForResponse,
+  formatMediaAssetWithPreviewForResponse,
+} from "../media/media.service.js";
 
 const courseAdminInclude = {
   category: true,
@@ -41,18 +45,28 @@ const courseAdminInclude = {
     select: {
       id: true,
       objectKey: true,
+      originalFilename: true,
+      mimeType: true,
+      fileSizeBytes: true,
+      durationSeconds: true,
       publicUrl: true,
       mediaKind: true,
       uploadStatus: true,
+      createdAt: true,
     },
   },
   bannerImageAsset: {
     select: {
       id: true,
       objectKey: true,
+      originalFilename: true,
+      mimeType: true,
+      fileSizeBytes: true,
+      durationSeconds: true,
       publicUrl: true,
       mediaKind: true,
       uploadStatus: true,
+      createdAt: true,
     },
   },
   _count: {
@@ -102,18 +116,28 @@ const coursePublicSelect = {
     select: {
       id: true,
       objectKey: true,
+      originalFilename: true,
+      mimeType: true,
+      fileSizeBytes: true,
+      durationSeconds: true,
       publicUrl: true,
       mediaKind: true,
       uploadStatus: true,
+      createdAt: true,
     },
   },
   bannerImageAsset: {
     select: {
       id: true,
       objectKey: true,
+      originalFilename: true,
+      mimeType: true,
+      fileSizeBytes: true,
+      durationSeconds: true,
       publicUrl: true,
       mediaKind: true,
       uploadStatus: true,
+      createdAt: true,
     },
   },
   _count: {
@@ -126,6 +150,30 @@ const coursePublicSelect = {
       },
     },
   },
+};
+
+const formatCourseForResponse = (course) => {
+  if (!course) return course;
+
+  return {
+    ...course,
+    thumbnailImageAsset: formatMediaAssetForResponse(course.thumbnailImageAsset),
+    bannerImageAsset: formatMediaAssetForResponse(course.bannerImageAsset),
+  };
+};
+
+const formatPublicCourseForResponse = async (course) => {
+  if (!course) return course;
+
+  return {
+    ...course,
+    thumbnailImageAsset: await formatMediaAssetWithPreviewForResponse(
+      course.thumbnailImageAsset
+    ),
+    bannerImageAsset: await formatMediaAssetWithPreviewForResponse(
+      course.bannerImageAsset
+    ),
+  };
 };
 
 const validateCategory = async (categoryId) => {
@@ -221,7 +269,7 @@ export const createCourse = async ({
 
   const uniqueTagIds = [...new Set(tagIds || [])];
 
-  return prisma.course.create({
+  const course = await prisma.course.create({
     data: {
       title: title.trim(),
       slug: cleanSlug,
@@ -240,6 +288,8 @@ export const createCourse = async ({
     },
     include: courseAdminInclude,
   });
+
+  return formatCourseForResponse(course);
 };
 
 export const listAdminCourses = async ({
@@ -282,7 +332,7 @@ export const listAdminCourses = async ({
   ]);
 
   return {
-    items,
+    items: await Promise.all(items.map(formatPublicCourseForResponse)),
     pagination: buildPaginationMeta({
       page: pagination.page,
       limit: pagination.limit,
@@ -301,7 +351,7 @@ export const getAdminCourseById = async (courseId) => {
     throw new ApiError(404, "Course not found");
   }
 
-  return course;
+  return formatCourseForResponse(course);
 };
 
 export const updateCourse = async ({
@@ -397,18 +447,20 @@ export const updateCourse = async ({
       }
     }
 
-    return tx.course.update({
+    const course = await tx.course.update({
       where: { id: courseId },
       data,
       include: courseAdminInclude,
     });
+
+    return formatCourseForResponse(course);
   });
 };
 
 export const softDeleteCourse = async (courseId) => {
   await getAdminCourseById(courseId);
 
-  return prisma.course.update({
+  const course = await prisma.course.update({
     where: { id: courseId },
     data: {
       status: "ARCHIVED",
@@ -416,6 +468,8 @@ export const softDeleteCourse = async (courseId) => {
     },
     include: courseAdminInclude,
   });
+
+  return formatCourseForResponse(course);
 };
 
 export const publishCourse = async (courseId) => {
@@ -432,7 +486,7 @@ export const publishCourse = async (courseId) => {
     throw new ApiError(400, "Add at least one active course price before publishing");
   }
 
-  return prisma.course.update({
+  const updatedCourse = await prisma.course.update({
     where: { id: course.id },
     data: {
       status: "PUBLISHED",
@@ -440,18 +494,22 @@ export const publishCourse = async (courseId) => {
     },
     include: courseAdminInclude,
   });
+
+  return formatCourseForResponse(updatedCourse);
 };
 
 export const unpublishCourse = async (courseId) => {
   const course = await getAdminCourseById(courseId);
 
-  return prisma.course.update({
+  const updatedCourse = await prisma.course.update({
     where: { id: course.id },
     data: {
       status: "DRAFT",
     },
     include: courseAdminInclude,
   });
+
+  return formatCourseForResponse(updatedCourse);
 };
 
 export const listPublicCourses = async ({ page, limit, search, category, tag }) => {
@@ -503,7 +561,7 @@ export const listPublicCourses = async ({ page, limit, search, category, tag }) 
   ]);
 
   return {
-    items,
+    items: await Promise.all(items.map(formatPublicCourseForResponse)),
     pagination: buildPaginationMeta({
       page: pagination.page,
       limit: pagination.limit,
@@ -560,8 +618,10 @@ export const getPublicCourseBySlug = async ({ slug, userId = null }) => {
     })
   );
 
+  const formattedCourse = await formatPublicCourseForResponse(course);
+
   return {
-    ...course,
+    ...formattedCourse,
     access,
     lectures,
   };

@@ -56,3 +56,10 @@ export const mediaAssetIdParamSchema = z.object({
     mediaAssetId: z.string().min(1, "mediaAssetId is required"),
   }),
 });
+
+export const publicCourseImagePreviewParamSchema = z.object({
+  params: z.object({
+    slug: z.string().min(1, "Course slug is required"),
+    imageType: z.enum(["thumbnail", "banner"]),
+  }),
+});

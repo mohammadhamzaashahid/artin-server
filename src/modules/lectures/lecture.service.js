@@ -1,5 +1,6 @@
 import { prisma } from "../../config/prisma.js";
 import ApiError from "../../utils/ApiError.js";
+import { formatMediaAssetForResponse } from "../media/media.service.js";
 
 const lectureAdminInclude = {
   course: {
@@ -59,6 +60,18 @@ const normalizeBigIntValue = (value) => {
   }
 
   return value;
+};
+
+const formatLectureForResponse = (lecture) => {
+  const normalizedLecture = normalizeBigIntValue(lecture);
+
+  if (!normalizedLecture) return normalizedLecture;
+
+  return {
+    ...normalizedLecture,
+    audioMediaAsset: formatMediaAssetForResponse(normalizedLecture.audioMediaAsset),
+    videoMediaAsset: formatMediaAssetForResponse(normalizedLecture.videoMediaAsset),
+  };
 };
 
 const validateCourseExists = async (courseId) => {
@@ -215,7 +228,7 @@ export const createLecture = async ({
     include: lectureAdminInclude,
   });
 
-  return normalizeBigIntValue(lecture);
+  return formatLectureForResponse(lecture);
 };
 
 export const listLecturesByCourse = async ({ courseId, includeDeleted }) => {
@@ -232,7 +245,7 @@ export const listLecturesByCourse = async ({ courseId, includeDeleted }) => {
     },
   });
 
-  return normalizeBigIntValue(lectures);
+  return lectures.map(formatLectureForResponse);
 };
 
 export const getLectureById = async (lectureId) => {
@@ -247,7 +260,7 @@ export const getLectureById = async (lectureId) => {
     throw new ApiError(404, "Lecture not found");
   }
 
-  return normalizeBigIntValue(lecture);
+  return formatLectureForResponse(lecture);
 };
 
 export const updateLecture = async ({
@@ -304,7 +317,7 @@ export const updateLecture = async ({
     include: lectureAdminInclude,
   });
 
-  return normalizeBigIntValue(lecture);
+  return formatLectureForResponse(lecture);
 };
 
 export const softDeleteLecture = async (lectureId) => {
@@ -323,7 +336,7 @@ export const softDeleteLecture = async (lectureId) => {
     include: lectureAdminInclude,
   });
 
-  return normalizeBigIntValue(archivedLecture);
+  return formatLectureForResponse(archivedLecture);
 };
 
 export const reorderLectures = async ({ courseId, lectures }) => {

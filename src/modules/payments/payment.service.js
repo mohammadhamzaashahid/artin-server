@@ -7,6 +7,7 @@ import {
   ACTIVE_SUBSCRIPTION_STATUSES,
   getCourseAccessForUser,
 } from "../access/access.service.js";
+import { formatMediaAssetForResponse } from "../media/media.service.js";
 
 const stripeSubscriptionStatusToDb = (status) => {
   const map = {
@@ -34,8 +35,26 @@ const getStripeId = (value) => {
   return value.id || null;
 };
 
+const isUniqueConstraintError = (error) => error?.code === "P2002";
+
 const toStripeAmount = (amount) => {
   return Math.round(Number(amount) * 100);
+};
+
+const formatCourseSummaryForResponse = (course) => {
+  if (!course) return course;
+
+  return {
+    ...course,
+    thumbnailImageAsset: formatMediaAssetForResponse(course.thumbnailImageAsset),
+  };
+};
+
+const formatCourseRelationItemForResponse = (item) => {
+  return {
+    ...item,
+    course: formatCourseSummaryForResponse(item.course),
+  };
 };
 
 const getOrCreateStripeCustomer = async (user) => {
@@ -163,6 +182,216 @@ const getCourseAndPriceForCheckout = async ({ courseId, coursePriceId }) => {
   };
 };
 
+const upsertPendingPurchaseForCheckout = async ({
+  userId,
+  courseId,
+  coursePrice,
+  stripeCheckoutSessionId,
+}) => {
+  const pendingData = {
+    coursePriceId: coursePrice.id,
+    amount: coursePrice.amount,
+    currency: coursePrice.currency,
+    status: "PENDING",
+    stripeCheckoutSessionId,
+    stripePaymentIntentId: null,
+    purchasedAt: null,
+    refundedAt: null,
+  };
+
+  const updateResult = await prisma.purchase.updateMany({
+    where: {
+      userId,
+      courseId,
+      status: {
+        not: "PAID",
+      },
+    },
+    data: pendingData,
+  });
+
+  if (updateResult.count > 0) return;
+
+  const existingPaidPurchase = await prisma.purchase.findFirst({
+    where: {
+      userId,
+      courseId,
+      status: "PAID",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (existingPaidPurchase) return;
+
+  try {
+    await prisma.purchase.create({
+      data: {
+        userId,
+        courseId,
+        ...pendingData,
+      },
+    });
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) throw error;
+
+    await prisma.purchase.updateMany({
+      where: {
+        userId,
+        courseId,
+        status: {
+          not: "PAID",
+        },
+      },
+      data: pendingData,
+    });
+  }
+};
+
+const upsertPendingSubscriptionForCheckout = async ({
+  userId,
+  courseId,
+  coursePriceId,
+  stripeCustomerId,
+  stripeCheckoutSessionId,
+}) => {
+  const pendingData = {
+    coursePriceId,
+    stripeCustomerId,
+    stripeCheckoutSessionId,
+    status: "INCOMPLETE",
+    currentPeriodStart: null,
+    currentPeriodEnd: null,
+    cancelAtPeriodEnd: false,
+    canceledAt: null,
+  };
+
+  const updateResult = await prisma.courseSubscription.updateMany({
+    where: {
+      userId,
+      courseId,
+      status: {
+        notIn: ACTIVE_SUBSCRIPTION_STATUSES,
+      },
+    },
+    data: pendingData,
+  });
+
+  if (updateResult.count > 0) return;
+
+  const activeSubscription = await prisma.courseSubscription.findFirst({
+    where: {
+      userId,
+      courseId,
+      status: {
+        in: ACTIVE_SUBSCRIPTION_STATUSES,
+      },
+    },
+    select: {
+      id: true,
+      stripeCheckoutSessionId: true,
+    },
+  });
+
+  if (activeSubscription) {
+    if (!activeSubscription.stripeCheckoutSessionId) {
+      await prisma.courseSubscription.update({
+        where: {
+          id: activeSubscription.id,
+        },
+        data: {
+          stripeCheckoutSessionId,
+        },
+      });
+    }
+
+    return;
+  }
+
+  try {
+    await prisma.courseSubscription.create({
+      data: {
+        userId,
+        courseId,
+        ...pendingData,
+      },
+    });
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) throw error;
+
+    await prisma.courseSubscription.updateMany({
+      where: {
+        userId,
+        courseId,
+        status: {
+          notIn: ACTIVE_SUBSCRIPTION_STATUSES,
+        },
+      },
+      data: pendingData,
+    });
+  }
+};
+
+const markPurchasePaidFromCheckoutSession = async (session) => {
+  const metadata = session.metadata || {};
+  const userId = metadata.userId;
+  const courseId = metadata.courseId;
+  const coursePriceId = metadata.coursePriceId;
+  const paymentIntentId = getStripeId(session.payment_intent);
+
+  const coursePrice = await prisma.coursePrice.findUnique({
+    where: {
+      id: coursePriceId,
+    },
+    select: {
+      id: true,
+      amount: true,
+      currency: true,
+    },
+  });
+
+  const amountTotal =
+    typeof session.amount_total === "number" ? session.amount_total / 100 : null;
+
+  const paidData = {
+    coursePriceId,
+    amount: coursePrice?.amount ?? amountTotal ?? 0,
+    currency: (coursePrice?.currency || session.currency || "USD").toUpperCase(),
+    status: "PAID",
+    stripeCheckoutSessionId: session.id,
+    stripePaymentIntentId: paymentIntentId,
+    purchasedAt: new Date(),
+    refundedAt: null,
+  };
+
+  try {
+    await prisma.purchase.upsert({
+      where: {
+        userId_courseId: {
+          userId,
+          courseId,
+        },
+      },
+      create: {
+        userId,
+        courseId,
+        ...paidData,
+      },
+      update: paidData,
+    });
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) throw error;
+
+    await prisma.purchase.updateMany({
+      where: {
+        stripeCheckoutSessionId: session.id,
+      },
+      data: paidData,
+    });
+  }
+};
+
 export const createCheckoutSession = async ({ userId, courseId, coursePriceId }) => {
   ensureStripeConfigured();
 
@@ -230,8 +459,8 @@ export const createCheckoutSession = async ({ userId, courseId, coursePriceId })
         quantity: 1,
       },
     ],
-    success_url: env.STRIPE_SUCCESS_URL,
-    cancel_url: env.STRIPE_CANCEL_URL,
+    success_url: `${env.STRIPE_SUCCESS_URL}&slug=${encodeURIComponent(course.slug)}`,
+    cancel_url: `${env.STRIPE_CANCEL_URL}?slug=${encodeURIComponent(course.slug)}`,
     client_reference_id: `${user.id}:${course.id}:${coursePrice.id}`,
     metadata,
     ...(mode === "subscription"
@@ -248,61 +477,21 @@ export const createCheckoutSession = async ({ userId, courseId, coursePriceId })
   });
 
   if (coursePrice.priceType === "ONE_TIME") {
-    await prisma.purchase.upsert({
-      where: {
-        userId_courseId: {
-          userId: user.id,
-          courseId: course.id,
-        },
-      },
-      create: {
-        userId: user.id,
-        courseId: course.id,
-        coursePriceId: coursePrice.id,
-        amount: coursePrice.amount,
-        currency: coursePrice.currency,
-        status: "PENDING",
-        stripeCheckoutSessionId: checkoutSession.id,
-      },
-      update: {
-        coursePriceId: coursePrice.id,
-        amount: coursePrice.amount,
-        currency: coursePrice.currency,
-        status: "PENDING",
-        stripeCheckoutSessionId: checkoutSession.id,
-        stripePaymentIntentId: null,
-        purchasedAt: null,
-        refundedAt: null,
-      },
+    await upsertPendingPurchaseForCheckout({
+      userId: user.id,
+      courseId: course.id,
+      coursePrice,
+      stripeCheckoutSessionId: checkoutSession.id,
     });
   }
 
   if (coursePrice.priceType === "SUBSCRIPTION") {
-    await prisma.courseSubscription.upsert({
-      where: {
-        userId_courseId: {
-          userId: user.id,
-          courseId: course.id,
-        },
-      },
-      create: {
-        userId: user.id,
-        courseId: course.id,
-        coursePriceId: coursePrice.id,
-        stripeCustomerId,
-        stripeCheckoutSessionId: checkoutSession.id,
-        status: "INCOMPLETE",
-      },
-      update: {
-        coursePriceId: coursePrice.id,
-        stripeCustomerId,
-        stripeCheckoutSessionId: checkoutSession.id,
-        status: "INCOMPLETE",
-        currentPeriodStart: null,
-        currentPeriodEnd: null,
-        cancelAtPeriodEnd: false,
-        canceledAt: null,
-      },
+    await upsertPendingSubscriptionForCheckout({
+      userId: user.id,
+      courseId: course.id,
+      coursePriceId: coursePrice.id,
+      stripeCustomerId,
+      stripeCheckoutSessionId: checkoutSession.id,
     });
   }
 
@@ -386,7 +575,7 @@ export const listMyPurchases = async ({ userId, page, limit }) => {
   ]);
 
   return {
-    items,
+    items: items.map(formatCourseRelationItemForResponse),
     pagination: buildPaginationMeta({
       page: pagination.page,
       limit: pagination.limit,
@@ -435,7 +624,7 @@ export const listMySubscriptions = async ({ userId, page, limit }) => {
   ]);
 
   return {
-    items,
+    items: items.map(formatCourseRelationItemForResponse),
     pagination: buildPaginationMeta({
       page: pagination.page,
       limit: pagination.limit,
@@ -510,13 +699,136 @@ export const getMyAccessibleCourses = async ({ userId, page, limit }) => {
   ]);
 
   return {
-    items,
+    items: items.map(formatCourseSummaryForResponse),
     pagination: buildPaginationMeta({
       page: pagination.page,
       limit: pagination.limit,
       total,
     }),
   };
+};
+
+export const getCheckoutSessionStatus = async ({ userId, sessionId }) => {
+  const findLocalSessionStatus = async () => {
+    const purchase = await prisma.purchase.findFirst({
+      where: {
+        userId,
+        stripeCheckoutSessionId: sessionId,
+      },
+      select: {
+        status: true,
+        course: {
+          select: { slug: true },
+        },
+      },
+    });
+
+    if (purchase) {
+      return {
+        status: purchase.status,
+        type: "PURCHASE",
+        courseSlug: purchase.course?.slug || null,
+      };
+    }
+
+    const subscription = await prisma.courseSubscription.findFirst({
+      where: {
+        userId,
+        stripeCheckoutSessionId: sessionId,
+      },
+      select: {
+        status: true,
+        course: {
+          select: { slug: true },
+        },
+      },
+    });
+
+    if (subscription) {
+      return {
+        status: subscription.status,
+        type: "SUBSCRIPTION",
+        courseSlug: subscription.course?.slug || null,
+      };
+    }
+
+    return null;
+  };
+
+  const localStatus = await findLocalSessionStatus();
+
+  if (
+    localStatus &&
+    ["PAID", "ACTIVE", "TRIALING", "FAILED", "CANCELLED", "INCOMPLETE_EXPIRED"].includes(
+      localStatus.status
+    )
+  ) {
+    return localStatus;
+  }
+
+  ensureStripeConfigured();
+
+  const user = await prisma.user.findUnique({
+    where: {
+      id: userId,
+    },
+    select: {
+      stripeCustomerId: true,
+    },
+  });
+
+  const stripe = getStripeClient();
+  let session;
+
+  try {
+    session = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: ["payment_intent", "subscription"],
+    });
+  } catch {
+    return (
+      localStatus || {
+        status: "NOT_FOUND",
+        type: null,
+        courseSlug: null,
+      }
+    );
+  }
+
+  const sessionUserId = session.metadata?.userId || null;
+  const sessionCustomerId = getStripeId(session.customer);
+  const belongsToUser =
+    sessionUserId === userId ||
+    (user?.stripeCustomerId && sessionCustomerId === user.stripeCustomerId);
+
+  if (!belongsToUser) {
+    return (
+      localStatus || {
+        status: "NOT_FOUND",
+        type: null,
+        courseSlug: null,
+      }
+    );
+  }
+
+  if (session.status === "expired") {
+    await processCheckoutSessionExpired(session);
+  } else if (
+    session.mode === "payment" &&
+    session.status === "complete" &&
+    session.payment_status === "paid"
+  ) {
+    await processCheckoutSessionCompleted(session);
+  } else if (session.mode === "subscription" && session.status === "complete") {
+    await processCheckoutSessionCompleted(session);
+  }
+
+  return (
+    (await findLocalSessionStatus()) || {
+      status: "NOT_FOUND",
+      type: null,
+      courseSlug: null,
+    }
+  );
 };
 
 export const processCheckoutSessionCompleted = async (session) => {
@@ -530,18 +842,11 @@ export const processCheckoutSessionCompleted = async (session) => {
   }
 
   if (session.mode === "payment") {
-    const paymentIntentId = getStripeId(session.payment_intent);
+    if (session.payment_status && session.payment_status !== "paid") {
+      return;
+    }
 
-    await prisma.purchase.updateMany({
-      where: {
-        stripeCheckoutSessionId: session.id,
-      },
-      data: {
-        status: "PAID",
-        stripePaymentIntentId: paymentIntentId,
-        purchasedAt: new Date(),
-      },
-    });
+    await markPurchasePaidFromCheckoutSession(session);
 
     return;
   }
@@ -556,7 +861,9 @@ export const processCheckoutSessionCompleted = async (session) => {
     const stripe = getStripeClient();
     const subscription = await stripe.subscriptions.retrieve(stripeSubscriptionId);
 
-    await processStripeSubscriptionObject(subscription);
+    await processStripeSubscriptionObject(subscription, {
+      stripeCheckoutSessionId: session.id,
+    });
   }
 };
 
@@ -591,6 +898,7 @@ export const processCheckoutSessionPaymentFailed = async (session) => {
     await prisma.purchase.updateMany({
       where: {
         stripeCheckoutSessionId: session.id,
+        status: "PENDING",
       },
       data: {
         status: "FAILED",
@@ -599,7 +907,7 @@ export const processCheckoutSessionPaymentFailed = async (session) => {
   }
 };
 
-export const processStripeSubscriptionObject = async (subscription) => {
+export const processStripeSubscriptionObject = async (subscription, options = {}) => {
   const metadata = subscription.metadata || {};
   const userId = metadata.userId;
   const courseId = metadata.courseId;
@@ -616,6 +924,9 @@ export const processStripeSubscriptionObject = async (subscription) => {
     currentPeriodEnd: toDateFromUnixSeconds(subscription.current_period_end),
     cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
     canceledAt: toDateFromUnixSeconds(subscription.canceled_at),
+    ...(options.stripeCheckoutSessionId
+      ? { stripeCheckoutSessionId: options.stripeCheckoutSessionId }
+      : {}),
   };
 
   const existingBySubscriptionId = await prisma.courseSubscription.findFirst({

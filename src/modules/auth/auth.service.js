@@ -485,7 +485,7 @@ export const requestPasswordReset = async ({ email }) => {
 
   return {
     sent: true,
-    ...(env.NODE_ENV === "development"),
+
   };
 };
 

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 
-import { authenticate, requireVerifiedEmail } from "../../middlewares/auth.middleware.js";
+import { optionalAuthenticate } from "../../middlewares/auth.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import { getLecturePlaybackUrlController } from "./media.controller.js";
 
@@ -15,8 +15,7 @@ const router = Router();
 
 router.get(
   "/:lectureId/playback-url",
-  authenticate,
-  requireVerifiedEmail,
+  optionalAuthenticate,
   validate(playbackUrlSchema),
   getLecturePlaybackUrlController
 );

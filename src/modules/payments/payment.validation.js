@@ -17,3 +17,9 @@ export const listMyPaymentsSchema = z.object({
     limit: z.coerce.number().int().positive().max(100).default(20),
   }),
 });
+
+export const getSessionStatusSchema = z.object({
+  query: z.object({
+    sessionId: z.string().trim().min(1, "sessionId is required"),
+  }),
+});
