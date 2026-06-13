@@ -44,6 +44,7 @@ const courseAdminInclude = {
   thumbnailImageAsset: {
     select: {
       id: true,
+      provider: true,
       objectKey: true,
       originalFilename: true,
       mimeType: true,
@@ -58,6 +59,7 @@ const courseAdminInclude = {
   bannerImageAsset: {
     select: {
       id: true,
+      provider: true,
       objectKey: true,
       originalFilename: true,
       mimeType: true,
@@ -115,6 +117,7 @@ const coursePublicSelect = {
   thumbnailImageAsset: {
     select: {
       id: true,
+      provider: true,
       objectKey: true,
       originalFilename: true,
       mimeType: true,
@@ -129,6 +132,7 @@ const coursePublicSelect = {
   bannerImageAsset: {
     select: {
       id: true,
+      provider: true,
       objectKey: true,
       originalFilename: true,
       mimeType: true,

@@ -736,6 +736,7 @@ export const listMyPurchases = async ({ userId, page, limit }) => {
             thumbnailImageAsset: {
               select: {
                 id: true,
+                provider: true,
                 objectKey: true,
                 publicUrl: true,
               },
@@ -785,6 +786,7 @@ export const listMySubscriptions = async ({ userId, page, limit }) => {
             thumbnailImageAsset: {
               select: {
                 id: true,
+                provider: true,
                 objectKey: true,
                 publicUrl: true,
               },
@@ -867,6 +869,7 @@ export const getMyAccessibleCourses = async ({ userId, page, limit }) => {
         thumbnailImageAsset: {
           select: {
             id: true,
+            provider: true,
             objectKey: true,
             publicUrl: true,
           },
