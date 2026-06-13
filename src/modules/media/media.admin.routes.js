@@ -1,26 +1,26 @@
 import { Router } from "express";
 
 import { validate } from "../../middlewares/validate.middleware.js";
+import { handleMediaUpload } from "./media.multer.js";
 import {
-  completeUploadSchema,
-  createUploadUrlSchema,
   listMediaAssetsSchema,
   mediaAssetIdParamSchema,
+  uploadMediaSchema,
 } from "./media.validation.js";
 
 import {
-  completeUploadByAdmin,
-  createUploadUrlByAdmin,
   deleteMediaAssetByAdmin,
   getMediaAssetByAdmin,
   getMediaAssetPreviewUrlByAdmin,
   listMediaAssetsByAdmin,
+  uploadMediaByAdmin,
 } from "./media.controller.js";
 
 const router = Router();
 
-router.post("/create-upload-url", validate(createUploadUrlSchema), createUploadUrlByAdmin);
-router.post("/complete-upload", validate(completeUploadSchema), completeUploadByAdmin);
+// multer runs first (writes temp file), then validate checks the body fields
+router.post("/upload", handleMediaUpload, validate(uploadMediaSchema), uploadMediaByAdmin);
+
 router.get("/", validate(listMediaAssetsSchema), listMediaAssetsByAdmin);
 router.get("/:mediaAssetId/preview-url", validate(mediaAssetIdParamSchema), getMediaAssetPreviewUrlByAdmin);
 router.get("/:mediaAssetId", validate(mediaAssetIdParamSchema), getMediaAssetByAdmin);

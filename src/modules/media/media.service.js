@@ -1,16 +1,9 @@
+import fs from "fs";
 import crypto from "crypto";
 import path from "path";
-import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-  PutObjectCommand,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import { prisma } from "../../config/prisma.js";
-import { env } from "../../config/env.js";
-import { ensureR2Configured, getR2BucketName, getR2Client } from "../../config/r2.js";
+import { buildLocalPublicUrl, ensureDir, getUploadsDir } from "../../config/storage.js";
 import ApiError from "../../utils/ApiError.js";
 import { buildPaginationMeta, getPagination } from "../../utils/pagination.js";
 import { buildLectureAccessView, getCourseAccessForUser } from "../access/access.service.js";
@@ -76,23 +69,11 @@ const buildObjectKey = ({ mediaKind, fileName }) => {
   return `${folder}/${yyyy}/${mm}/${random}-${base}${ext}`;
 };
 
-export const buildMediaPublicUrl = (objectKey) => {
-  if (!objectKey || !env.R2_PUBLIC_BASE_URL) return null;
-
-  const baseUrl = env.R2_PUBLIC_BASE_URL.trim().replace(/\/+$/, "");
-  const encodedObjectKey = objectKey
-    .split("/")
-    .map((part) => encodeURIComponent(part))
-    .join("/");
-
-  return `${baseUrl}/${encodedObjectKey}`;
-};
-
 const validateMediaPayload = ({ mediaKind, mimeType, fileSizeBytes }) => {
   const allowedMimeTypes = allowedMimeByKind[mediaKind] || [];
 
   if (!allowedMimeTypes.includes(mimeType)) {
-    throw new ApiError(400, `Invalid MIME type for ${mediaKind}`);
+    throw new ApiError(400, `Invalid MIME type "${mimeType}" for ${mediaKind}`);
   }
 
   const maxSize = maxSizeByKind[mediaKind];
@@ -102,10 +83,20 @@ const validateMediaPayload = ({ mediaKind, mimeType, fileSizeBytes }) => {
   }
 };
 
+// Always rebuild the public URL from objectKey for LOCAL assets so the URL
+// reflects the current SERVER_BASE_URL — this means changing the tunnel or
+// VPS domain never requires a DB migration.
+const resolvePublicUrl = (asset) => {
+  if (asset.provider === "LOCAL" && asset.objectKey) {
+    return buildLocalPublicUrl(asset.objectKey);
+  }
+  return asset.publicUrl || null;
+};
+
 export const formatMediaAssetForResponse = (asset) => {
   if (!asset) return asset;
 
-  const publicUrl = asset.publicUrl || buildMediaPublicUrl(asset.objectKey);
+  const publicUrl = resolvePublicUrl(asset);
 
   return {
     ...asset,
@@ -118,29 +109,19 @@ export const formatMediaAssetForResponse = (asset) => {
   };
 };
 
-export const buildMediaPreview = async (asset) => {
-  ensureR2Configured();
-
+// Returns a preview descriptor — returns null for assets not yet ready so the
+// caller can fall back to directUrl gracefully instead of throwing a 400.
+export const buildMediaPreview = (asset) => {
   if (!asset) return null;
 
-  if (!["UPLOADED", "READY"].includes(asset.uploadStatus)) {
-    throw new ApiError(400, "Media asset is not ready for preview");
-  }
+  if (!["UPLOADED", "READY"].includes(asset.uploadStatus)) return null;
 
-  const command = new GetObjectCommand({
-    Bucket: getR2BucketName(),
-    Key: asset.objectKey,
-  });
-
-  const previewUrl = await getSignedUrl(getR2Client(), command, {
-    expiresIn: env.R2_SIGNED_PLAYBACK_EXPIRES_SECONDS,
-  });
+  const url = resolvePublicUrl(asset);
 
   return {
-    url: previewUrl,
-    expiresIn: env.R2_SIGNED_PLAYBACK_EXPIRES_SECONDS,
+    url,
     mimeType: asset.mimeType,
-    isSigned: true,
+    isSigned: false,
   };
 };
 
@@ -149,133 +130,58 @@ export const formatMediaAssetWithPreviewForResponse = async (asset) => {
 
   return {
     ...formatMediaAssetForResponse(asset),
-    preview: await buildMediaPreview(asset),
+    preview: buildMediaPreview(asset),
   };
 };
 
-const normalizeMediaAssetList = (items) => {
-  return items.map(formatMediaAssetForResponse);
-};
+const normalizeMediaAssetList = (items) => items.map(formatMediaAssetForResponse);
 
-export const createSignedUploadUrl = async ({
-  adminUserId,
-  mediaKind,
-  fileName,
-  mimeType,
-  fileSizeBytes,
-  durationSeconds,
-}) => {
-  ensureR2Configured();
-  validateMediaPayload({ mediaKind, mimeType, fileSizeBytes });
+// ─── Upload ───────────────────────────────────────────────────────────────────
 
-  const objectKey = buildObjectKey({
-    mediaKind,
-    fileName,
-  });
-
-  const mediaAsset = await prisma.mediaAsset.create({
-    data: {
-      provider: "R2",
-      bucketName: env.R2_BUCKET_NAME,
-      objectKey,
-      publicUrl: buildMediaPublicUrl(objectKey),
-      originalFilename: fileName,
-      mimeType,
-      fileSizeBytes: BigInt(fileSizeBytes),
-      durationSeconds: durationSeconds ?? null,
-      mediaKind,
-      uploadStatus: "PENDING",
-      createdByAdminId: adminUserId,
-    },
-  });
-
-  const command = new PutObjectCommand({
-    Bucket: getR2BucketName(),
-    Key: objectKey,
-    ContentType: mimeType,
-  });
-
-  const uploadUrl = await getSignedUrl(getR2Client(), command, {
-    expiresIn: env.R2_SIGNED_UPLOAD_EXPIRES_SECONDS,
-  });
-
-  return {
-    mediaAsset: formatMediaAssetForResponse(mediaAsset),
-    upload: {
-      method: "PUT",
-      url: uploadUrl,
-      expiresIn: env.R2_SIGNED_UPLOAD_EXPIRES_SECONDS,
-      headers: {
-        "Content-Type": mimeType,
-      },
-    },
-  };
-};
-
-export const completeMediaUpload = async ({ mediaAssetId, durationSeconds }) => {
-  ensureR2Configured();
-
-  const mediaAsset = await prisma.mediaAsset.findUnique({
-    where: {
-      id: mediaAssetId,
-    },
-  });
-
-  if (!mediaAsset) {
-    throw new ApiError(404, "Media asset not found");
-  }
-
-  if (mediaAsset.provider !== "R2") {
-    throw new ApiError(400, "Only R2 media assets are supported");
-  }
+export const uploadMediaFile = async ({ adminUserId, file, mediaKind, durationSeconds }) => {
+  const tempPath = file.path;
 
   try {
-    const head = await getR2Client().send(
-      new HeadObjectCommand({
-        Bucket: getR2BucketName(),
-        Key: mediaAsset.objectKey,
-      })
-    );
+    validateMediaPayload({
+      mediaKind,
+      mimeType: file.mimetype,
+      fileSizeBytes: file.size,
+    });
 
-    const updated = await prisma.mediaAsset.update({
-      where: {
-        id: mediaAsset.id,
-      },
+    const objectKey = buildObjectKey({ mediaKind, fileName: file.originalname });
+    const uploadsDir = getUploadsDir();
+    const targetPath = path.join(uploadsDir, objectKey);
+
+    await ensureDir(path.dirname(targetPath));
+    await fs.promises.rename(tempPath, targetPath);
+
+    const publicUrl = buildLocalPublicUrl(objectKey);
+
+    const mediaAsset = await prisma.mediaAsset.create({
       data: {
+        provider: "LOCAL",
+        bucketName: uploadsDir,
+        objectKey,
+        publicUrl,
+        originalFilename: file.originalname,
+        mimeType: file.mimetype,
+        fileSizeBytes: BigInt(file.size),
+        durationSeconds: durationSeconds ?? null,
+        mediaKind,
         uploadStatus: "UPLOADED",
-        fileSizeBytes:
-          typeof head.ContentLength === "number"
-            ? BigInt(head.ContentLength)
-            : mediaAsset.fileSizeBytes,
-        durationSeconds:
-          typeof durationSeconds !== "undefined"
-            ? durationSeconds
-            : mediaAsset.durationSeconds,
+        createdByAdminId: adminUserId,
       },
     });
 
-    return formatMediaAssetForResponse(updated);
+    return formatMediaAssetForResponse(mediaAsset);
   } catch (error) {
-    await prisma.mediaAsset.update({
-      where: {
-        id: mediaAsset.id,
-      },
-      data: {
-        uploadStatus: "FAILED",
-      },
-    });
-
-    throw new ApiError(
-      400,
-      "Upload could not be verified in Cloudflare R2. Please upload the file again",
-      [
-        {
-          message: error.message,
-        },
-      ]
-    );
+    // Best-effort cleanup of the temp file if it still exists
+    fs.promises.unlink(tempPath).catch(() => {});
+    throw error;
   }
 };
+
+// ─── List / Get ───────────────────────────────────────────────────────────────
 
 export const listMediaAssets = async ({ page, limit, mediaKind, uploadStatus, search }) => {
   const pagination = getPagination({ page, limit });
@@ -297,9 +203,7 @@ export const listMediaAssets = async ({ page, limit, mediaKind, uploadStatus, se
   const [items, total] = await prisma.$transaction([
     prisma.mediaAsset.findMany({
       where,
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: { createdAt: "desc" },
       skip: pagination.skip,
       take: pagination.take,
       include: {
@@ -328,9 +232,7 @@ export const listMediaAssets = async ({ page, limit, mediaKind, uploadStatus, se
 
 export const getMediaAssetById = async (mediaAssetId) => {
   const mediaAsset = await prisma.mediaAsset.findUnique({
-    where: {
-      id: mediaAssetId,
-    },
+    where: { id: mediaAssetId },
     include: {
       createdByAdmin: {
         select: {
@@ -352,9 +254,7 @@ export const getMediaAssetById = async (mediaAssetId) => {
 
 export const getMediaAssetPreviewUrl = async (mediaAssetId) => {
   const mediaAsset = await prisma.mediaAsset.findUnique({
-    where: {
-      id: mediaAssetId,
-    },
+    where: { id: mediaAssetId },
   });
 
   if (!mediaAsset) {
@@ -363,15 +263,13 @@ export const getMediaAssetPreviewUrl = async (mediaAssetId) => {
 
   return {
     mediaAsset: formatMediaAssetForResponse(mediaAsset),
-    preview: await buildMediaPreview(mediaAsset),
+    preview: buildMediaPreview(mediaAsset),
   };
 };
 
 export const getPublicCourseImagePreviewUrl = async (mediaAssetId) => {
   const mediaAsset = await prisma.mediaAsset.findUnique({
-    where: {
-      id: mediaAssetId,
-    },
+    where: { id: mediaAssetId },
   });
 
   if (!mediaAsset) {
@@ -387,18 +285,11 @@ export const getPublicCourseImagePreviewUrl = async (mediaAssetId) => {
       status: "PUBLISHED",
       deletedAt: null,
       OR: [
-        {
-          thumbnailImageAssetId: mediaAsset.id,
-        },
-        {
-          bannerImageAssetId: mediaAsset.id,
-        },
+        { thumbnailImageAssetId: mediaAsset.id },
+        { bannerImageAssetId: mediaAsset.id },
       ],
     },
-    select: {
-      id: true,
-      slug: true,
-    },
+    select: { id: true, slug: true },
   });
 
   if (!attachedCourse) {
@@ -408,17 +299,13 @@ export const getPublicCourseImagePreviewUrl = async (mediaAssetId) => {
   return {
     course: attachedCourse,
     mediaAsset: formatMediaAssetForResponse(mediaAsset),
-    preview: await buildMediaPreview(mediaAsset),
+    preview: buildMediaPreview(mediaAsset),
   };
 };
 
 export const getPublicCourseImagePreviewByCourse = async ({ slug, imageType }) => {
   const course = await prisma.course.findFirst({
-    where: {
-      slug,
-      status: "PUBLISHED",
-      deletedAt: null,
-    },
+    where: { slug, status: "PUBLISHED", deletedAt: null },
     select: {
       id: true,
       slug: true,
@@ -432,9 +319,7 @@ export const getPublicCourseImagePreviewByCourse = async ({ slug, imageType }) =
   }
 
   const mediaAsset =
-    imageType === "thumbnail"
-      ? course.thumbnailImageAsset
-      : course.bannerImageAsset;
+    imageType === "thumbnail" ? course.thumbnailImageAsset : course.bannerImageAsset;
 
   if (!mediaAsset) {
     throw new ApiError(404, `Course ${imageType} image not found`);
@@ -445,44 +330,23 @@ export const getPublicCourseImagePreviewByCourse = async ({ slug, imageType }) =
   }
 
   return {
-    course: {
-      id: course.id,
-      slug: course.slug,
-    },
+    course: { id: course.id, slug: course.slug },
     imageType,
     mediaAsset: formatMediaAssetForResponse(mediaAsset),
-    preview: await buildMediaPreview(mediaAsset),
+    preview: buildMediaPreview(mediaAsset),
   };
 };
 
-export const deleteMediaAsset = async (mediaAssetId) => {
-  ensureR2Configured();
+// ─── Delete ───────────────────────────────────────────────────────────────────
 
+export const deleteMediaAsset = async (mediaAssetId) => {
   const mediaAsset = await prisma.mediaAsset.findUnique({
-    where: {
-      id: mediaAssetId,
-    },
+    where: { id: mediaAssetId },
     include: {
-      courseThumbnails: {
-        select: {
-          id: true,
-        },
-      },
-      courseBanners: {
-        select: {
-          id: true,
-        },
-      },
-      lectureAudios: {
-        select: {
-          id: true,
-        },
-      },
-      lectureVideos: {
-        select: {
-          id: true,
-        },
-      },
+      courseThumbnails: { select: { id: true } },
+      courseBanners: { select: { id: true } },
+      lectureAudios: { select: { id: true } },
+      lectureVideos: { select: { id: true } },
     },
   });
 
@@ -499,75 +363,47 @@ export const deleteMediaAsset = async (mediaAssetId) => {
 
   await prisma.$transaction(async (tx) => {
     await tx.course.updateMany({
-      where: {
-        thumbnailImageAssetId: mediaAsset.id,
-      },
-      data: {
-        thumbnailImageAssetId: null,
-      },
+      where: { thumbnailImageAssetId: mediaAsset.id },
+      data: { thumbnailImageAssetId: null },
     });
 
     await tx.course.updateMany({
-      where: {
-        bannerImageAssetId: mediaAsset.id,
-      },
-      data: {
-        bannerImageAssetId: null,
-      },
+      where: { bannerImageAssetId: mediaAsset.id },
+      data: { bannerImageAssetId: null },
     });
 
     await tx.lecture.updateMany({
-      where: {
-        audioMediaAssetId: mediaAsset.id,
-      },
-      data: {
-        audioMediaAssetId: null,
-      },
+      where: { audioMediaAssetId: mediaAsset.id },
+      data: { audioMediaAssetId: null },
     });
 
     await tx.lecture.updateMany({
-      where: {
-        videoMediaAssetId: mediaAsset.id,
-      },
-      data: {
-        videoMediaAssetId: null,
-      },
+      where: { videoMediaAssetId: mediaAsset.id },
+      data: { videoMediaAssetId: null },
     });
 
-    await tx.mediaAsset.delete({
-      where: {
-        id: mediaAsset.id,
-      },
-    });
+    await tx.mediaAsset.delete({ where: { id: mediaAsset.id } });
   });
 
-  try {
-    await getR2Client().send(
-      new DeleteObjectCommand({
-        Bucket: getR2BucketName(),
-        Key: mediaAsset.objectKey,
-      })
-    );
-  } catch (error) {
-    console.error("Failed to delete object from R2:", {
-      objectKey: mediaAsset.objectKey,
-      message: error.message,
+  // Delete the physical file — best-effort; log but don't throw if missing
+  if (mediaAsset.objectKey) {
+    const filePath = path.join(getUploadsDir(), mediaAsset.objectKey);
+    fs.promises.unlink(filePath).catch((err) => {
+      console.error("Failed to delete media file from disk:", {
+        filePath,
+        message: err.message,
+      });
     });
   }
 
-  return {
-    deleted: true,
-    detachedFrom,
-  };
+  return { deleted: true, detachedFrom };
 };
 
-export const getLecturePlaybackUrl = async ({ userId, lectureId }) => {
-  ensureR2Configured();
+// ─── Playback ─────────────────────────────────────────────────────────────────
 
+export const getLecturePlaybackUrl = async ({ userId, lectureId }) => {
   const lecture = await prisma.lecture.findUnique({
-    where: {
-      id: lectureId,
-    },
+    where: { id: lectureId },
     select: {
       id: true,
       title: true,
@@ -624,9 +460,7 @@ export const getLecturePlaybackUrl = async ({ userId, lectureId }) => {
 
   if (!lectureAccess.canPlay) {
     throw new ApiError(403, "You do not have access to this lecture", [
-      {
-        reason: lectureAccess.lockReason,
-      },
+      { reason: lectureAccess.lockReason },
     ]);
   }
 
@@ -640,14 +474,7 @@ export const getLecturePlaybackUrl = async ({ userId, lectureId }) => {
     throw new ApiError(400, "Lecture media is not ready");
   }
 
-  const command = new GetObjectCommand({
-    Bucket: getR2BucketName(),
-    Key: mediaAsset.objectKey,
-  });
-
-  const playbackUrl = await getSignedUrl(getR2Client(), command, {
-    expiresIn: env.R2_SIGNED_PLAYBACK_EXPIRES_SECONDS,
-  });
+  const playbackUrl = resolvePublicUrl(mediaAsset);
 
   return {
     lecture: {
@@ -661,7 +488,6 @@ export const getLecturePlaybackUrl = async ({ userId, lectureId }) => {
     },
     playback: {
       url: playbackUrl,
-      expiresIn: env.R2_SIGNED_PLAYBACK_EXPIRES_SECONDS,
       mimeType: mediaAsset.mimeType,
     },
   };

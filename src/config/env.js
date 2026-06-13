@@ -48,14 +48,8 @@ const envSchema = z.object({
   PASSWORD_RESET_RATE_LIMIT_WINDOW_MS: z.coerce.number().default(15 * 60 * 1000),
   PASSWORD_RESET_RATE_LIMIT_MAX: z.coerce.number().default(5),
 
-  R2_ACCOUNT_ID: z.string().optional().default(""),
-  R2_ACCESS_KEY_ID: z.string().optional().default(""),
-  R2_SECRET_ACCESS_KEY: z.string().optional().default(""),
-  R2_BUCKET_NAME: z.string().optional().default(""),
-  R2_ENDPOINT: z.string().url().optional().or(z.literal("")).default(""),
-  R2_PUBLIC_BASE_URL: z.string().optional().default(""),
-  R2_SIGNED_UPLOAD_EXPIRES_SECONDS: z.coerce.number().default(900),
-  R2_SIGNED_PLAYBACK_EXPIRES_SECONDS: z.coerce.number().default(300),
+  UPLOADS_DIR: z.string().optional().default(""),
+  SERVER_BASE_URL: z.string().url().default("http://localhost:5000"),
 
   STRIPE_SECRET_KEY: z.string().optional().default(""),
   STRIPE_PUBLISHABLE_KEY: z.string().optional().default(""),
@@ -104,19 +98,6 @@ if (env.EMAIL_PROVIDER === "smtp") {
     console.error(`Missing SMTP environment variables: ${missing.join(", ")}`);
     process.exit(1);
   }
-}
-
-const isR2Configured =
-  env.R2_ACCOUNT_ID &&
-  env.R2_ACCESS_KEY_ID &&
-  env.R2_SECRET_ACCESS_KEY &&
-  env.R2_BUCKET_NAME &&
-  env.R2_ENDPOINT;
-
-if (env.NODE_ENV !== "test" && !isR2Configured) {
-  console.warn(
-    "Cloudflare R2 is not fully configured. Media upload/playback APIs will fail until R2 env values are set."
-  );
 }
 
 const isStripeConfigured =

@@ -5,6 +5,7 @@ import morgan from "morgan";
 import cookieParser from "cookie-parser";
 
 import { env } from "./config/env.js";
+import { getUploadsDir } from "./config/storage.js";
 import { notFoundMiddleware } from "./middlewares/notFound.middleware.js";
 import { errorMiddleware } from "./middlewares/error.middleware.js";
 import { globalRateLimiter } from "./middlewares/rateLimit.middleware.js";
@@ -39,6 +40,15 @@ app.options(/.*/, cors(corsOptions));
 app.use(
   helmet({
     crossOriginResourcePolicy: false,
+  })
+);
+
+// Serve uploaded files as static assets — must be before rate limiter & API routes
+app.use(
+  "/uploads",
+  express.static(getUploadsDir(), {
+    maxAge: "1d",
+    etag: true,
   })
 );
 

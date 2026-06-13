@@ -1,9 +1,8 @@
 import asyncHandler from "../../utils/asyncHandler.js";
 import ApiResponse from "../../utils/ApiResponse.js";
+import ApiError from "../../utils/ApiError.js";
 import { createAdminAuditLog } from "../audit/audit.service.js";
 import {
-  completeMediaUpload,
-  createSignedUploadUrl,
   deleteMediaAsset,
   getLecturePlaybackUrl,
   getMediaAssetById,
@@ -11,52 +10,34 @@ import {
   getPublicCourseImagePreviewByCourse,
   getPublicCourseImagePreviewUrl,
   listMediaAssets,
+  uploadMediaFile,
 } from "./media.service.js";
 
-export const createUploadUrlByAdmin = asyncHandler(async (req, res) => {
+export const uploadMediaByAdmin = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    throw new ApiError(400, "No file provided. Send the file as multipart/form-data field 'file'");
+  }
+
   const { body } = req.validated;
 
-  const result = await createSignedUploadUrl({
+  const mediaAsset = await uploadMediaFile({
     adminUserId: req.user.id,
-    ...body,
+    file: req.file,
+    mediaKind: body.mediaKind,
+    durationSeconds: body.durationSeconds,
   });
 
   await createAdminAuditLog({
     adminUserId: req.user.id,
     action: "UPLOAD",
     entityType: "MediaAsset",
-    entityId: result.mediaAsset.id,
-    newValue: {
-      mediaAsset: result.mediaAsset,
-      upload: {
-        method: result.upload.method,
-        expiresIn: result.upload.expiresIn,
-        headers: result.upload.headers,
-      },
-    },
-    ipAddress: req.ip,
-    userAgent: req.get("user-agent"),
-  });
-
-  return res.status(201).json(new ApiResponse(201, result, "Signed upload URL created successfully"));
-});
-
-export const completeUploadByAdmin = asyncHandler(async (req, res) => {
-  const { body } = req.validated;
-
-  const mediaAsset = await completeMediaUpload(body);
-
-  await createAdminAuditLog({
-    adminUserId: req.user.id,
-    action: "UPDATE",
-    entityType: "MediaAsset",
     entityId: mediaAsset.id,
-    newValue: mediaAsset,
+    newValue: { mediaAsset },
     ipAddress: req.ip,
     userAgent: req.get("user-agent"),
   });
 
-  return res.status(200).json(new ApiResponse(200, { mediaAsset }, "Media upload completed successfully"));
+  return res.status(201).json(new ApiResponse(201, { mediaAsset }, "Media uploaded successfully"));
 });
 
 export const listMediaAssetsByAdmin = asyncHandler(async (req, res) => {
@@ -94,10 +75,7 @@ export const getPublicCourseImagePreviewUrlController = asyncHandler(async (req,
 export const getPublicCourseImagePreviewByCourseController = asyncHandler(async (req, res) => {
   const { slug, imageType } = req.validated.params;
 
-  const result = await getPublicCourseImagePreviewByCourse({
-    slug,
-    imageType,
-  });
+  const result = await getPublicCourseImagePreviewByCourse({ slug, imageType });
 
   return res.status(200).json(new ApiResponse(200, result, "Course image preview URL generated successfully"));
 });
