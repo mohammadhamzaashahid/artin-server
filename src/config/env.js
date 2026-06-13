@@ -64,17 +64,18 @@ const envSchema = z.object({
     .string()
     .url()
     .optional()
-    .default("http://localhost:3000/payment/success?session_id={CHECKOUT_SESSION_ID}"),
+    // .default("http://localhost:3000/payment/success?session_id={CHECKOUT_SESSION_ID}"),
+    .default("https://artinistitute-lms.vercel.app/payment/success?session_id={CHECKOUT_SESSION_ID}"),
   STRIPE_CANCEL_URL: z
     .string()
     .url()
     .optional()
-    .default("http://localhost:3000/payment/cancel"),
+    .default("https://artinistitute-lms.vercel.app/payment/cancel"),
   STRIPE_CUSTOMER_PORTAL_RETURN_URL: z
     .string()
     .url()
     .optional()
-    .default("http://localhost:3000/profile/billing"),
+    .default("https://artinistitute-lms.vercel.app/profile/billing"),
 });
 
 const parsed = envSchema.safeParse(process.env);

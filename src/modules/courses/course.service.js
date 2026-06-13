@@ -152,11 +152,23 @@ const coursePublicSelect = {
   },
 };
 
+const normalizeCourseTags = (tags = []) => {
+  if (!Array.isArray(tags)) return [];
+
+  return tags
+    .map((item) => item?.tag || item)
+    .filter((tag) => tag?.id);
+};
+
 const formatCourseForResponse = (course) => {
   if (!course) return course;
 
+  const tags = normalizeCourseTags(course.tags);
+
   return {
     ...course,
+    tags,
+    tagIds: tags.map((tag) => tag.id),
     thumbnailImageAsset: formatMediaAssetForResponse(course.thumbnailImageAsset),
     bannerImageAsset: formatMediaAssetForResponse(course.bannerImageAsset),
   };
@@ -165,8 +177,12 @@ const formatCourseForResponse = (course) => {
 const formatPublicCourseForResponse = async (course) => {
   if (!course) return course;
 
+  const tags = normalizeCourseTags(course.tags);
+
   return {
     ...course,
+    tags,
+    tagIds: tags.map((tag) => tag.id),
     thumbnailImageAsset: await formatMediaAssetWithPreviewForResponse(
       course.thumbnailImageAsset
     ),

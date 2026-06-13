@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+
 import { prisma } from "../../config/prisma.js";
 import { env } from "../../config/env.js";
 import { ensureStripeConfigured, getStripeClient } from "../../config/stripe.js";
@@ -41,6 +43,36 @@ const toStripeAmount = (amount) => {
   return Math.round(Number(amount) * 100);
 };
 
+const appendUrlParams = (url, params) => {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && typeof value !== "undefined") {
+      searchParams.set(key, value);
+    }
+  });
+
+  if (!searchParams.toString()) return url;
+
+  const separator = url.includes("?")
+    ? url.endsWith("?") || url.endsWith("&")
+      ? ""
+      : "&"
+    : "?";
+
+  return `${url}${separator}${searchParams.toString()}`;
+};
+
+const buildStripeIdempotencyKey = (prefix, parts) => {
+  const hash = createHash("sha256").update(parts.join(":")).digest("hex").slice(0, 32);
+  return `${prefix}:${hash}`;
+};
+
+const getCheckoutIdempotencyKey = ({ userId, courseId, coursePriceId }) => {
+  const dayBucket = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
+  return buildStripeIdempotencyKey("checkout", [userId, courseId, coursePriceId, dayBucket]);
+};
+
 const formatCourseSummaryForResponse = (course) => {
   if (!course) return course;
 
@@ -67,18 +99,21 @@ const getOrCreateStripeCustomer = async (user) => {
       if (!customer.deleted) {
         return customer.id;
       }
-    } catch {
-     
-    }
+    } catch {}
   }
 
-  const customer = await stripe.customers.create({
-    email: user.email,
-    name: `${user.firstName} ${user.lastName}`.trim(),
-    metadata: {
-      userId: user.id,
+  const customer = await stripe.customers.create(
+    {
+      email: user.email,
+      name: `${user.firstName} ${user.lastName}`.trim(),
+      metadata: {
+        userId: user.id,
+      },
     },
-  });
+    {
+      idempotencyKey: buildStripeIdempotencyKey("customer", [user.id]),
+    }
+  );
 
   await prisma.user.update({
     where: {
@@ -104,13 +139,18 @@ const getOrCreateStripePriceForCoursePrice = async ({ course, coursePrice }) => 
 
   const product = coursePrice.stripeProductId
     ? await stripe.products.retrieve(coursePrice.stripeProductId)
-    : await stripe.products.create({
-        name: course.title,
-        description: course.shortDescription || course.subtitle || course.title,
-        metadata: {
-          courseId: course.id,
+    : await stripe.products.create(
+        {
+          name: course.title,
+          description: course.shortDescription || course.subtitle || course.title,
+          metadata: {
+            courseId: course.id,
+          },
         },
-      });
+        {
+          idempotencyKey: buildStripeIdempotencyKey("course-product", [course.id]),
+        }
+      );
 
   const pricePayload = {
     product: product.id,
@@ -133,7 +173,9 @@ const getOrCreateStripePriceForCoursePrice = async ({ course, coursePrice }) => 
     };
   }
 
-  const price = await stripe.prices.create(pricePayload);
+  const price = await stripe.prices.create(pricePayload, {
+    idempotencyKey: buildStripeIdempotencyKey("course-price", [coursePrice.id]),
+  });
 
   await prisma.coursePrice.update({
     where: {
@@ -333,12 +375,123 @@ const upsertPendingSubscriptionForCheckout = async ({
   }
 };
 
+const getReusableCheckoutSession = async ({ userId, courseId, priceType }) => {
+  const localCheckout =
+    priceType === "ONE_TIME"
+      ? await prisma.purchase.findFirst({
+          where: {
+            userId,
+            courseId,
+            status: "PENDING",
+            stripeCheckoutSessionId: {
+              not: null,
+            },
+          },
+          select: {
+            stripeCheckoutSessionId: true,
+          },
+        })
+      : await prisma.courseSubscription.findFirst({
+          where: {
+            userId,
+            courseId,
+            status: "INCOMPLETE",
+            stripeCheckoutSessionId: {
+              not: null,
+            },
+          },
+          select: {
+            stripeCheckoutSessionId: true,
+          },
+        });
+
+  if (!localCheckout?.stripeCheckoutSessionId) return null;
+
+  const stripe = getStripeClient();
+  let session;
+
+  try {
+    session = await stripe.checkout.sessions.retrieve(localCheckout.stripeCheckoutSessionId);
+  } catch {
+    return null;
+  }
+
+  if (session.status === "open" && session.url) {
+    return {
+      checkoutSessionId: session.id,
+      checkoutUrl: session.url,
+      mode: session.mode,
+      reused: true,
+    };
+  }
+
+  if (session.status === "expired") {
+    await processCheckoutSessionExpired(session);
+    return null;
+  }
+
+  if (
+    (session.mode === "payment" &&
+      session.status === "complete" &&
+      session.payment_status === "paid") ||
+    (session.mode === "subscription" && session.status === "complete")
+  ) {
+    await processCheckoutSessionCompleted(session);
+    return {
+      completed: true,
+    };
+  }
+
+  return null;
+};
+
 const markPurchasePaidFromCheckoutSession = async (session) => {
   const metadata = session.metadata || {};
   const userId = metadata.userId;
   const courseId = metadata.courseId;
   const coursePriceId = metadata.coursePriceId;
   const paymentIntentId = getStripeId(session.payment_intent);
+
+  const existingPaidPurchase = await prisma.purchase.findUnique({
+    where: {
+      userId_courseId: {
+        userId,
+        courseId,
+      },
+    },
+    select: {
+      id: true,
+      status: true,
+      stripeCheckoutSessionId: true,
+      stripePaymentIntentId: true,
+    },
+  });
+
+  if (existingPaidPurchase?.status === "PAID") {
+    const isSamePayment =
+      existingPaidPurchase.stripeCheckoutSessionId === session.id ||
+      existingPaidPurchase.stripePaymentIntentId === paymentIntentId;
+
+    if (isSamePayment || !paymentIntentId) return;
+
+    const stripe = getStripeClient();
+
+    await stripe.refunds.create(
+      {
+        payment_intent: paymentIntentId,
+        metadata: {
+          reason: "duplicate_course_purchase",
+          originalPurchaseId: existingPaidPurchase.id,
+          duplicateCheckoutSessionId: session.id,
+        },
+      },
+      {
+        idempotencyKey: buildStripeIdempotencyKey("duplicate-refund", [paymentIntentId]),
+      }
+    );
+
+    return;
+  }
 
   const coursePrice = await prisma.coursePrice.findUnique({
     where: {
@@ -432,6 +585,27 @@ export const createCheckoutSession = async ({ userId, courseId, coursePriceId })
     throw new ApiError(400, "You already have access to this course");
   }
 
+  const reusableSession = await getReusableCheckoutSession({
+    userId: user.id,
+    courseId: course.id,
+    priceType: coursePrice.priceType,
+  });
+
+  if (reusableSession?.checkoutUrl) {
+    return reusableSession;
+  }
+
+  if (reusableSession?.completed) {
+    const refreshedAccess = await getCourseAccessForUser({
+      userId: user.id,
+      courseId: course.id,
+    });
+
+    if (refreshedAccess.hasAccess) {
+      throw new ApiError(400, "You already have access to this course");
+    }
+  }
+
   const stripeCustomerId = await getOrCreateStripeCustomer(user);
 
   const { stripePriceId } = await getOrCreateStripePriceForCoursePrice({
@@ -450,31 +624,40 @@ export const createCheckoutSession = async ({ userId, courseId, coursePriceId })
     priceType: coursePrice.priceType,
   };
 
-  const checkoutSession = await stripe.checkout.sessions.create({
-    mode,
-    customer: stripeCustomerId,
-    line_items: [
-      {
-        price: stripePriceId,
-        quantity: 1,
-      },
-    ],
-    success_url: `${env.STRIPE_SUCCESS_URL}&slug=${encodeURIComponent(course.slug)}`,
-    cancel_url: `${env.STRIPE_CANCEL_URL}?slug=${encodeURIComponent(course.slug)}`,
-    client_reference_id: `${user.id}:${course.id}:${coursePrice.id}`,
-    metadata,
-    ...(mode === "subscription"
-      ? {
-          subscription_data: {
-            metadata,
-          },
-        }
-      : {
-          payment_intent_data: {
-            metadata,
-          },
-        }),
-  });
+  const checkoutSession = await stripe.checkout.sessions.create(
+    {
+      mode,
+      customer: stripeCustomerId,
+      line_items: [
+        {
+          price: stripePriceId,
+          quantity: 1,
+        },
+      ],
+      success_url: appendUrlParams(env.STRIPE_SUCCESS_URL, { slug: course.slug }),
+      cancel_url: appendUrlParams(env.STRIPE_CANCEL_URL, { slug: course.slug }),
+      client_reference_id: `${user.id}:${course.id}:${coursePrice.id}`,
+      metadata,
+      ...(mode === "subscription"
+        ? {
+            subscription_data: {
+              metadata,
+            },
+          }
+        : {
+            payment_intent_data: {
+              metadata,
+            },
+          }),
+    },
+    {
+      idempotencyKey: getCheckoutIdempotencyKey({
+        userId: user.id,
+        courseId: course.id,
+        coursePriceId: coursePrice.id,
+      }),
+    }
+  );
 
   if (coursePrice.priceType === "ONE_TIME") {
     await upsertPendingPurchaseForCheckout({
