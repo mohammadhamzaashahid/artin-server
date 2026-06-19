@@ -33,6 +33,14 @@ enum MediaKind {
   AUDIO
   VIDEO
   IMAGE
+  DOCUMENT
+}
+
+enum BatchStatus {
+  UPCOMING
+  ONGOING
+  COMPLETED
+  CANCELLED
 }
 
 enum MediaProvider {
@@ -205,11 +213,13 @@ model Course {
   categoryId String?
   category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
-  thumbnailImageAssetId String?
-  bannerImageAssetId    String?
+  thumbnailImageAssetId        String?
+  bannerImageAssetId           String?
+  outlineDocumentAssetId       String?
 
-  thumbnailImageAsset MediaAsset? @relation("CourseThumbnail", fields: [thumbnailImageAssetId], references: [id], onDelete: SetNull)
-  bannerImageAsset    MediaAsset? @relation("CourseBanner", fields: [bannerImageAssetId], references: [id], onDelete: SetNull)
+  thumbnailImageAsset        MediaAsset? @relation("CourseThumbnail", fields: [thumbnailImageAssetId], references: [id], onDelete: SetNull)
+  bannerImageAsset           MediaAsset? @relation("CourseBanner", fields: [bannerImageAssetId], references: [id], onDelete: SetNull)
+  outlineDocumentAsset       MediaAsset? @relation("CourseOutlineDocument", fields: [outlineDocumentAssetId], references: [id], onDelete: SetNull)
 
   createdByAdminId String?
   createdByAdmin   User? @relation("CourseCreatedBy", fields: [createdByAdminId], references: [id], onDelete: SetNull)
@@ -226,6 +236,8 @@ model Course {
   purchases     Purchase[]
   subscriptions CourseSubscription[]
   progress      LectureProgress[]
+  flyerAssets   CourseFlyerAsset[]
+  batches       CourseBatch[]
 
   @@index([status])
   @@index([categoryId])
@@ -283,10 +295,12 @@ model MediaAsset {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  courseThumbnails Course[]  @relation("CourseThumbnail")
-  courseBanners    Course[]  @relation("CourseBanner")
-  lectureAudios    Lecture[] @relation("LectureAudio")
-  lectureVideos    Lecture[] @relation("LectureVideo")
+  courseThumbnails        Course[]           @relation("CourseThumbnail")
+  courseBanners           Course[]           @relation("CourseBanner")
+  courseOutlineDocuments  Course[]           @relation("CourseOutlineDocument")
+  courseFlyerAssets       CourseFlyerAsset[]
+  lectureAudios           Lecture[]          @relation("LectureAudio")
+  lectureVideos           Lecture[]          @relation("LectureVideo")
 
   @@index([objectKey])
   @@index([mediaKind])
@@ -432,4 +446,44 @@ model AdminAuditLog {
   @@index([adminUserId])
   @@index([entityType, entityId])
   @@index([createdAt])
+}
+
+model CourseFlyerAsset {
+  id           String @id @default(cuid())
+  courseId     String
+  mediaAssetId String
+  displayOrder Int    @default(0)
+
+  createdAt DateTime @default(now())
+
+  course     Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  mediaAsset MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, mediaAssetId])
+  @@index([courseId])
+  @@index([mediaAssetId])
+}
+
+model CourseBatch {
+  id               String      @id @default(cuid())
+  courseId         String
+  title            String?
+  startDate        DateTime
+  endDate          DateTime
+  numberOfSessions Int
+  fee              Decimal     @db.Decimal(10, 2)
+  currency         String      @default("USD")
+  description      String?
+  status           BatchStatus @default(UPCOMING)
+  isActive         Boolean     @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId])
+  @@index([status])
+  @@index([startDate])
+  @@index([isActive])
 }

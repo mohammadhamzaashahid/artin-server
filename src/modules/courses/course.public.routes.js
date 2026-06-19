@@ -2,8 +2,8 @@ import { Router } from "express";
 
 import { optionalAuthenticate } from "../../middlewares/auth.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
-import { courseSlugParamSchema, listPublicCoursesSchema } from "./course.validation.js";
-import { getCoursePublic, listCoursesPublic } from "./course.controller.js";
+import { courseSlugBatchesSchema, courseSlugParamSchema, listPublicCoursesSchema } from "./course.validation.js";
+import { getCoursePublic, listCoursesPublic, listCourseBatchesPublic } from "./course.controller.js";
 import {
   mediaAssetIdParamSchema,
   publicCourseImagePreviewParamSchema,
@@ -26,6 +26,7 @@ router.get(
   validate(publicCourseImagePreviewParamSchema),
   getPublicCourseImagePreviewByCourseController
 );
+router.get("/:slug/batches", validate(courseSlugBatchesSchema), listCourseBatchesPublic);
 router.get("/:slug", optionalAuthenticate, validate(courseSlugParamSchema), getCoursePublic);
 
 export default router;

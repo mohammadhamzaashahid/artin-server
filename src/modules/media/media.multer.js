@@ -21,6 +21,10 @@ const allowedMimeTypes = new Set([
   "video/mp4",
   "video/webm",
   "video/quicktime",
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
+  "text/plain",
 ]);
 
 const storage = multer.diskStorage({

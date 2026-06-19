@@ -11,11 +11,13 @@ import { buildLectureAccessView, getCourseAccessForUser } from "../access/access
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_AUDIO_SIZE_BYTES = 500 * 1024 * 1024;
 const MAX_VIDEO_SIZE_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_DOCUMENT_SIZE_BYTES = 50 * 1024 * 1024;
 
 const mediaFolderByKind = {
   IMAGE: "images",
   AUDIO: "audio",
   VIDEO: "video",
+  DOCUMENT: "documents",
 };
 
 const allowedMimeByKind = {
@@ -30,12 +32,19 @@ const allowedMimeByKind = {
     "audio/ogg",
   ],
   VIDEO: ["video/mp4", "video/webm", "video/quicktime"],
+  DOCUMENT: [
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
+    "text/plain",
+  ],
 };
 
 const maxSizeByKind = {
   IMAGE: MAX_IMAGE_SIZE_BYTES,
   AUDIO: MAX_AUDIO_SIZE_BYTES,
   VIDEO: MAX_VIDEO_SIZE_BYTES,
+  DOCUMENT: MAX_DOCUMENT_SIZE_BYTES,
 };
 
 const sanitizeFileName = (fileName) => {
@@ -345,6 +354,8 @@ export const deleteMediaAsset = async (mediaAssetId) => {
     include: {
       courseThumbnails: { select: { id: true } },
       courseBanners: { select: { id: true } },
+      courseOutlineDocuments: { select: { id: true } },
+      courseFlyerAssets: { select: { id: true } },
       lectureAudios: { select: { id: true } },
       lectureVideos: { select: { id: true } },
     },
@@ -357,6 +368,8 @@ export const deleteMediaAsset = async (mediaAssetId) => {
   const detachedFrom = {
     courseThumbnails: mediaAsset.courseThumbnails.length,
     courseBanners: mediaAsset.courseBanners.length,
+    courseOutlineDocuments: mediaAsset.courseOutlineDocuments.length,
+    courseFlyerAssets: mediaAsset.courseFlyerAssets.length,
     lectureAudios: mediaAsset.lectureAudios.length,
     lectureVideos: mediaAsset.lectureVideos.length,
   };
@@ -370,6 +383,15 @@ export const deleteMediaAsset = async (mediaAssetId) => {
     await tx.course.updateMany({
       where: { bannerImageAssetId: mediaAsset.id },
       data: { bannerImageAssetId: null },
+    });
+
+    await tx.course.updateMany({
+      where: { outlineDocumentAssetId: mediaAsset.id },
+      data: { outlineDocumentAssetId: null },
+    });
+
+    await tx.courseFlyerAsset.deleteMany({
+      where: { mediaAssetId: mediaAsset.id },
     });
 
     await tx.lecture.updateMany({

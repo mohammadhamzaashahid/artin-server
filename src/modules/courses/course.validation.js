@@ -3,6 +3,7 @@ import { z } from "zod";
 const courseStatusSchema = z.enum(["DRAFT", "PUBLISHED", "ARCHIVED"]);
 const priceTypeSchema = z.enum(["ONE_TIME", "SUBSCRIPTION"]);
 const billingIntervalSchema = z.enum(["MONTH", "YEAR"]);
+const batchStatusSchema = z.enum(["UPCOMING", "ONGOING", "COMPLETED", "CANCELLED"]);
 
 export const createCourseSchema = z.object({
   body: z.object({
@@ -21,6 +22,8 @@ export const createCourseSchema = z.object({
     tagIds: z.array(z.string()).default([]),
     thumbnailImageAssetId: z.string().optional().nullable(),
     bannerImageAssetId: z.string().optional().nullable(),
+    outlineDocumentAssetId: z.string().optional().nullable(),
+    flyerAssetIds: z.array(z.string()).default([]),
   }),
 });
 
@@ -44,6 +47,8 @@ export const updateCourseSchema = z.object({
     tagIds: z.array(z.string()).optional(),
     thumbnailImageAssetId: z.string().optional().nullable(),
     bannerImageAssetId: z.string().optional().nullable(),
+    outlineDocumentAssetId: z.string().optional().nullable(),
+    flyerAssetIds: z.array(z.string()).optional(),
     status: courseStatusSchema.optional(),
   }),
 });
@@ -131,5 +136,51 @@ export const updateCoursePriceSchema = z.object({
 export const priceIdParamSchema = z.object({
   params: z.object({
     priceId: z.string().min(1, "Price ID is required"),
+  }),
+});
+
+export const createCourseBatchSchema = z.object({
+  params: z.object({
+    courseId: z.string().min(1, "Course ID is required"),
+  }),
+  body: z.object({
+    title: z.string().trim().max(220).optional().nullable(),
+    startDate: z.string().datetime({ message: "startDate must be a valid ISO 8601 datetime" }),
+    endDate: z.string().datetime({ message: "endDate must be a valid ISO 8601 datetime" }),
+    numberOfSessions: z.coerce.number().int().positive("Number of sessions must be a positive integer"),
+    fee: z.coerce.number().nonnegative("Fee must be zero or greater"),
+    currency: z.string().trim().length(3, "Currency must be 3 characters").default("USD"),
+    description: z.string().trim().max(5000).optional().nullable(),
+    status: batchStatusSchema.default("UPCOMING"),
+    isActive: z.boolean().default(true),
+  }),
+});
+
+export const updateCourseBatchSchema = z.object({
+  params: z.object({
+    batchId: z.string().min(1, "Batch ID is required"),
+  }),
+  body: z.object({
+    title: z.string().trim().max(220).optional().nullable(),
+    startDate: z.string().datetime({ message: "startDate must be a valid ISO 8601 datetime" }).optional(),
+    endDate: z.string().datetime({ message: "endDate must be a valid ISO 8601 datetime" }).optional(),
+    numberOfSessions: z.coerce.number().int().positive().optional(),
+    fee: z.coerce.number().nonnegative().optional(),
+    currency: z.string().trim().length(3).optional(),
+    description: z.string().trim().max(5000).optional().nullable(),
+    status: batchStatusSchema.optional(),
+    isActive: z.boolean().optional(),
+  }),
+});
+
+export const batchIdParamSchema = z.object({
+  params: z.object({
+    batchId: z.string().min(1, "Batch ID is required"),
+  }),
+});
+
+export const courseSlugBatchesSchema = z.object({
+  params: z.object({
+    slug: z.string().min(1, "Course slug is required"),
   }),
 });

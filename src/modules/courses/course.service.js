@@ -8,6 +8,20 @@ import {
   formatMediaAssetWithPreviewForResponse,
 } from "../media/media.service.js";
 
+const mediaAssetSelect = {
+  id: true,
+  provider: true,
+  objectKey: true,
+  originalFilename: true,
+  mimeType: true,
+  fileSizeBytes: true,
+  durationSeconds: true,
+  publicUrl: true,
+  mediaKind: true,
+  uploadStatus: true,
+  createdAt: true,
+};
+
 const courseAdminInclude = {
   category: true,
   tags: {
@@ -41,35 +55,15 @@ const courseAdminInclude = {
       updatedAt: true,
     },
   },
-  thumbnailImageAsset: {
-    select: {
-      id: true,
-      provider: true,
-      objectKey: true,
-      originalFilename: true,
-      mimeType: true,
-      fileSizeBytes: true,
-      durationSeconds: true,
-      publicUrl: true,
-      mediaKind: true,
-      uploadStatus: true,
-      createdAt: true,
-    },
+  thumbnailImageAsset: { select: mediaAssetSelect },
+  bannerImageAsset: { select: mediaAssetSelect },
+  outlineDocumentAsset: { select: mediaAssetSelect },
+  flyerAssets: {
+    orderBy: { displayOrder: "asc" },
+    include: { mediaAsset: { select: mediaAssetSelect } },
   },
-  bannerImageAsset: {
-    select: {
-      id: true,
-      provider: true,
-      objectKey: true,
-      originalFilename: true,
-      mimeType: true,
-      fileSizeBytes: true,
-      durationSeconds: true,
-      publicUrl: true,
-      mediaKind: true,
-      uploadStatus: true,
-      createdAt: true,
-    },
+  batches: {
+    orderBy: { startDate: "asc" },
   },
   _count: {
     select: {
@@ -114,34 +108,26 @@ const coursePublicSelect = {
       stripePriceId: true,
     },
   },
-  thumbnailImageAsset: {
-    select: {
-      id: true,
-      provider: true,
-      objectKey: true,
-      originalFilename: true,
-      mimeType: true,
-      fileSizeBytes: true,
-      durationSeconds: true,
-      publicUrl: true,
-      mediaKind: true,
-      uploadStatus: true,
-      createdAt: true,
-    },
+  thumbnailImageAsset: { select: mediaAssetSelect },
+  bannerImageAsset: { select: mediaAssetSelect },
+  outlineDocumentAsset: { select: mediaAssetSelect },
+  flyerAssets: {
+    orderBy: { displayOrder: "asc" },
+    include: { mediaAsset: { select: mediaAssetSelect } },
   },
-  bannerImageAsset: {
+  batches: {
+    where: { isActive: true },
+    orderBy: { startDate: "asc" },
     select: {
       id: true,
-      provider: true,
-      objectKey: true,
-      originalFilename: true,
-      mimeType: true,
-      fileSizeBytes: true,
-      durationSeconds: true,
-      publicUrl: true,
-      mediaKind: true,
-      uploadStatus: true,
-      createdAt: true,
+      title: true,
+      startDate: true,
+      endDate: true,
+      numberOfSessions: true,
+      fee: true,
+      currency: true,
+      description: true,
+      status: true,
     },
   },
   _count: {
@@ -164,6 +150,13 @@ const normalizeCourseTags = (tags = []) => {
     .filter((tag) => tag?.id);
 };
 
+const formatFlyerAssetsForResponse = (flyerAssets = []) =>
+  flyerAssets.map((fa) => ({
+    id: fa.id,
+    displayOrder: fa.displayOrder,
+    mediaAsset: formatMediaAssetForResponse(fa.mediaAsset),
+  }));
+
 const formatCourseForResponse = (course) => {
   if (!course) return course;
 
@@ -175,6 +168,8 @@ const formatCourseForResponse = (course) => {
     tagIds: tags.map((tag) => tag.id),
     thumbnailImageAsset: formatMediaAssetForResponse(course.thumbnailImageAsset),
     bannerImageAsset: formatMediaAssetForResponse(course.bannerImageAsset),
+    outlineDocumentAsset: formatMediaAssetForResponse(course.outlineDocumentAsset),
+    flyerAssets: formatFlyerAssetsForResponse(course.flyerAssets),
   };
 };
 
@@ -193,6 +188,8 @@ const formatPublicCourseForResponse = async (course) => {
     bannerImageAsset: await formatMediaAssetWithPreviewForResponse(
       course.bannerImageAsset
     ),
+    outlineDocumentAsset: formatMediaAssetForResponse(course.outlineDocumentAsset),
+    flyerAssets: formatFlyerAssetsForResponse(course.flyerAssets),
   };
 };
 
@@ -247,6 +244,26 @@ const validateMediaAsset = async ({ mediaAssetId, expectedKind }) => {
   }
 };
 
+const validateFlyerAssetIds = async (flyerAssetIds = []) => {
+  if (!flyerAssetIds.length) return;
+
+  const uniqueIds = [...new Set(flyerAssetIds)];
+
+  const assets = await prisma.mediaAsset.findMany({
+    where: { id: { in: uniqueIds } },
+    select: { id: true, mediaKind: true },
+  });
+
+  if (assets.length !== uniqueIds.length) {
+    throw new ApiError(400, "One or more flyer asset IDs are invalid");
+  }
+
+  const nonImage = assets.find((a) => a.mediaKind !== "IMAGE");
+  if (nonImage) {
+    throw new ApiError(400, "All flyer assets must be of type IMAGE");
+  }
+};
+
 export const createCourse = async ({
   adminUserId,
   title,
@@ -258,11 +275,15 @@ export const createCourse = async ({
   tagIds,
   thumbnailImageAssetId,
   bannerImageAssetId,
+  outlineDocumentAssetId,
+  flyerAssetIds,
 }) => {
   await validateCategory(categoryId);
   await validateTags(tagIds);
   await validateMediaAsset({ mediaAssetId: thumbnailImageAssetId, expectedKind: "IMAGE" });
   await validateMediaAsset({ mediaAssetId: bannerImageAssetId, expectedKind: "IMAGE" });
+  await validateMediaAsset({ mediaAssetId: outlineDocumentAssetId, expectedKind: "DOCUMENT" });
+  await validateFlyerAssetIds(flyerAssetIds);
 
   const finalSlug =
     slug ||
@@ -288,6 +309,7 @@ export const createCourse = async ({
   }
 
   const uniqueTagIds = [...new Set(tagIds || [])];
+  const uniqueFlyerIds = [...new Set(flyerAssetIds || [])];
 
   const course = await prisma.course.create({
     data: {
@@ -299,10 +321,15 @@ export const createCourse = async ({
       categoryId: categoryId || null,
       thumbnailImageAssetId: thumbnailImageAssetId || null,
       bannerImageAssetId: bannerImageAssetId || null,
+      outlineDocumentAssetId: outlineDocumentAssetId || null,
       createdByAdminId: adminUserId,
       tags: {
-        create: uniqueTagIds.map((tagId) => ({
-          tagId,
+        create: uniqueTagIds.map((tagId) => ({ tagId })),
+      },
+      flyerAssets: {
+        create: uniqueFlyerIds.map((mediaAssetId, index) => ({
+          mediaAssetId,
+          displayOrder: index,
         })),
       },
     },
@@ -385,6 +412,8 @@ export const updateCourse = async ({
   tagIds,
   thumbnailImageAssetId,
   bannerImageAssetId,
+  outlineDocumentAssetId,
+  flyerAssetIds,
   status,
 }) => {
   const existing = await getAdminCourseById(courseId);
@@ -405,6 +434,14 @@ export const updateCourse = async ({
     await validateMediaAsset({ mediaAssetId: bannerImageAssetId, expectedKind: "IMAGE" });
   }
 
+  if (typeof outlineDocumentAssetId !== "undefined") {
+    await validateMediaAsset({ mediaAssetId: outlineDocumentAssetId, expectedKind: "DOCUMENT" });
+  }
+
+  if (typeof flyerAssetIds !== "undefined") {
+    await validateFlyerAssetIds(flyerAssetIds);
+  }
+
   const data = {};
 
   if (typeof title !== "undefined") data.title = title.trim();
@@ -419,6 +456,10 @@ export const updateCourse = async ({
 
   if (typeof bannerImageAssetId !== "undefined") {
     data.bannerImageAssetId = bannerImageAssetId || null;
+  }
+
+  if (typeof outlineDocumentAssetId !== "undefined") {
+    data.outlineDocumentAssetId = outlineDocumentAssetId || null;
   }
 
   if (typeof status !== "undefined") {
@@ -459,9 +500,24 @@ export const updateCourse = async ({
 
       if (uniqueTagIds.length > 0) {
         await tx.courseTag.createMany({
-          data: uniqueTagIds.map((tagId) => ({
+          data: uniqueTagIds.map((tagId) => ({ courseId, tagId })),
+        });
+      }
+    }
+
+    if (typeof flyerAssetIds !== "undefined") {
+      await tx.courseFlyerAsset.deleteMany({
+        where: { courseId },
+      });
+
+      const uniqueFlyerIds = [...new Set(flyerAssetIds)];
+
+      if (uniqueFlyerIds.length > 0) {
+        await tx.courseFlyerAsset.createMany({
+          data: uniqueFlyerIds.map((mediaAssetId, index) => ({
             courseId,
-            tagId,
+            mediaAssetId,
+            displayOrder: index,
           })),
         });
       }
@@ -780,6 +836,137 @@ export const deactivateCoursePrice = async (priceId) => {
     where: { id: priceId },
     data: {
       isActive: false,
+    },
+  });
+};
+
+// ─── Course Batches ───────────────────────────────────────────────────────────
+
+export const createCourseBatch = async ({
+  courseId,
+  title,
+  startDate,
+  endDate,
+  numberOfSessions,
+  fee,
+  currency,
+  description,
+  status,
+  isActive,
+}) => {
+  await getAdminCourseById(courseId);
+
+  if (new Date(endDate) <= new Date(startDate)) {
+    throw new ApiError(400, "endDate must be after startDate");
+  }
+
+  return prisma.courseBatch.create({
+    data: {
+      courseId,
+      title: title || null,
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      numberOfSessions,
+      fee,
+      currency: (currency || "USD").toUpperCase(),
+      description: description || null,
+      status: status || "UPCOMING",
+      isActive: isActive ?? true,
+    },
+  });
+};
+
+export const listCourseBatches = async (courseId) => {
+  await getAdminCourseById(courseId);
+
+  return prisma.courseBatch.findMany({
+    where: { courseId },
+    orderBy: { startDate: "asc" },
+  });
+};
+
+export const getCourseBatchById = async (batchId) => {
+  const batch = await prisma.courseBatch.findUnique({
+    where: { id: batchId },
+  });
+
+  if (!batch) {
+    throw new ApiError(404, "Course batch not found");
+  }
+
+  return batch;
+};
+
+export const updateCourseBatch = async ({
+  batchId,
+  title,
+  startDate,
+  endDate,
+  numberOfSessions,
+  fee,
+  currency,
+  description,
+  status,
+  isActive,
+}) => {
+  const existing = await getCourseBatchById(batchId);
+
+  const resolvedStart = startDate ? new Date(startDate) : existing.startDate;
+  const resolvedEnd = endDate ? new Date(endDate) : existing.endDate;
+
+  if (resolvedEnd <= resolvedStart) {
+    throw new ApiError(400, "endDate must be after startDate");
+  }
+
+  const data = {};
+
+  if (typeof title !== "undefined") data.title = title || null;
+  if (typeof startDate !== "undefined") data.startDate = new Date(startDate);
+  if (typeof endDate !== "undefined") data.endDate = new Date(endDate);
+  if (typeof numberOfSessions !== "undefined") data.numberOfSessions = numberOfSessions;
+  if (typeof fee !== "undefined") data.fee = fee;
+  if (typeof currency !== "undefined") data.currency = currency.toUpperCase();
+  if (typeof description !== "undefined") data.description = description || null;
+  if (typeof status !== "undefined") data.status = status;
+  if (typeof isActive !== "undefined") data.isActive = isActive;
+
+  return prisma.courseBatch.update({
+    where: { id: batchId },
+    data,
+  });
+};
+
+export const deleteCourseBatch = async (batchId) => {
+  await getCourseBatchById(batchId);
+
+  return prisma.courseBatch.delete({
+    where: { id: batchId },
+  });
+};
+
+export const listPublicCourseBatches = async (courseSlug) => {
+  const course = await prisma.course.findFirst({
+    where: { slug: courseSlug, status: "PUBLISHED", deletedAt: null },
+    select: { id: true },
+  });
+
+  if (!course) {
+    throw new ApiError(404, "Course not found");
+  }
+
+  return prisma.courseBatch.findMany({
+    where: { courseId: course.id, isActive: true },
+    orderBy: { startDate: "asc" },
+    select: {
+      id: true,
+      title: true,
+      startDate: true,
+      endDate: true,
+      numberOfSessions: true,
+      fee: true,
+      currency: true,
+      description: true,
+      status: true,
     },
   });
 };

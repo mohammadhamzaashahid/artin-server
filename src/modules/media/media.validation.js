@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const mediaKindSchema = z.enum(["AUDIO", "VIDEO", "IMAGE"]);
+const mediaKindSchema = z.enum(["AUDIO", "VIDEO", "IMAGE", "DOCUMENT"]);
 
 // Validates the non-file fields that come in as multipart/form-data body fields
 export const uploadMediaSchema = z.object({

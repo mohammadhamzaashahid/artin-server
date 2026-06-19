@@ -4,16 +4,22 @@ import { createAdminAuditLog } from "../audit/audit.service.js";
 import {
   createCourse,
   createCoursePrice,
+  createCourseBatch,
   deactivateCoursePrice,
+  deleteCourseBatch,
   getAdminCourseById,
+  getCourseBatchById,
   getPublicCourseBySlug,
   listAdminCourses,
+  listCourseBatches,
   listCoursePrices,
   listPublicCourses,
+  listPublicCourseBatches,
   publishCourse,
   softDeleteCourse,
   unpublishCourse,
   updateCourse,
+  updateCourseBatch,
   updateCoursePrice,
 } from "./course.service.js";
 
@@ -227,4 +233,79 @@ export const deleteCoursePriceByAdmin = asyncHandler(async (req, res) => {
   });
 
   return res.status(200).json(new ApiResponse(200, { price }, "Course price deactivated successfully"));
+});
+
+export const createCourseBatchByAdmin = asyncHandler(async (req, res) => {
+  const { courseId } = req.validated.params;
+  const { body } = req.validated;
+
+  const batch = await createCourseBatch({ courseId, ...body });
+
+  await createAdminAuditLog({
+    adminUserId: req.user.id,
+    action: "CREATE",
+    entityType: "CourseBatch",
+    entityId: batch.id,
+    newValue: batch,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent"),
+  });
+
+  return res.status(201).json(new ApiResponse(201, { batch }, "Course batch created successfully"));
+});
+
+export const listCourseBatchesByAdmin = asyncHandler(async (req, res) => {
+  const { courseId } = req.validated.params;
+
+  const batches = await listCourseBatches(courseId);
+
+  return res.status(200).json(new ApiResponse(200, { batches }, "Course batches fetched successfully"));
+});
+
+export const updateCourseBatchByAdmin = asyncHandler(async (req, res) => {
+  const { batchId } = req.validated.params;
+  const { body } = req.validated;
+
+  const oldBatch = await getCourseBatchById(batchId);
+  const batch = await updateCourseBatch({ batchId, ...body });
+
+  await createAdminAuditLog({
+    adminUserId: req.user.id,
+    action: "UPDATE",
+    entityType: "CourseBatch",
+    entityId: batch.id,
+    oldValue: oldBatch,
+    newValue: batch,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent"),
+  });
+
+  return res.status(200).json(new ApiResponse(200, { batch }, "Course batch updated successfully"));
+});
+
+export const deleteCourseBatchByAdmin = asyncHandler(async (req, res) => {
+  const { batchId } = req.validated.params;
+
+  const oldBatch = await getCourseBatchById(batchId);
+  await deleteCourseBatch(batchId);
+
+  await createAdminAuditLog({
+    adminUserId: req.user.id,
+    action: "DELETE",
+    entityType: "CourseBatch",
+    entityId: batchId,
+    oldValue: oldBatch,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent"),
+  });
+
+  return res.status(200).json(new ApiResponse(200, { deleted: true }, "Course batch deleted successfully"));
+});
+
+export const listCourseBatchesPublic = asyncHandler(async (req, res) => {
+  const { slug } = req.validated.params;
+
+  const batches = await listPublicCourseBatches(slug);
+
+  return res.status(200).json(new ApiResponse(200, { batches }, "Course batches fetched successfully"));
 });
