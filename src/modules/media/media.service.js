@@ -358,6 +358,8 @@ export const deleteMediaAsset = async (mediaAssetId) => {
       courseFlyerAssets: { select: { id: true } },
       lectureAudios: { select: { id: true } },
       lectureVideos: { select: { id: true } },
+      bookCoverImages: { select: { id: true } },
+      bookAudioFiles: { select: { id: true } },
     },
   });
 
@@ -372,6 +374,8 @@ export const deleteMediaAsset = async (mediaAssetId) => {
     courseFlyerAssets: mediaAsset.courseFlyerAssets.length,
     lectureAudios: mediaAsset.lectureAudios.length,
     lectureVideos: mediaAsset.lectureVideos.length,
+    bookCoverImages: mediaAsset.bookCoverImages.length,
+    bookAudioFiles: mediaAsset.bookAudioFiles.length,
   };
 
   await prisma.$transaction(async (tx) => {
@@ -402,6 +406,18 @@ export const deleteMediaAsset = async (mediaAssetId) => {
     await tx.lecture.updateMany({
       where: { videoMediaAssetId: mediaAsset.id },
       data: { videoMediaAssetId: null },
+    });
+
+    // Book cover images are deleted via onDelete: Cascade but we remove them
+    // explicitly here so detachedFrom counts are accurate before the parent delete.
+    await tx.bookCoverImage.deleteMany({
+      where: { mediaAssetId: mediaAsset.id },
+    });
+
+    // Book audio file links are nulled via onDelete: SetNull; we match that here.
+    await tx.bookAudioFile.updateMany({
+      where: { audioMediaAssetId: mediaAsset.id },
+      data: { audioMediaAssetId: null },
     });
 
     await tx.mediaAsset.delete({ where: { id: mediaAsset.id } });

@@ -26,6 +26,8 @@ import tagAdminRoutes from "../tags/tag.admin.routes.js";
 import courseAdminRoutes from "../courses/course.admin.routes.js";
 import lectureAdminRoutes from "../lectures/lecture.admin.routes.js";
 import mediaAdminRoutes from "../media/media.admin.routes.js";
+import bookAdminRoutes from "../books/book.admin.routes.js";
+import bookOrderAdminRoutes from "../book-orders/book-order.admin.routes.js";
 
 const router = Router();
 
@@ -49,5 +51,7 @@ router.use("/tags", tagAdminRoutes);
 router.use("/courses", courseAdminRoutes);
 router.use("/", lectureAdminRoutes);
 router.use("/media", mediaAdminRoutes);
+router.use("/books", bookAdminRoutes);
+router.use("/orders/books", bookOrderAdminRoutes);
 
 export default router;

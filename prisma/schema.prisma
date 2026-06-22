@@ -104,6 +104,26 @@ enum AuditAction {
   CANCEL
 }
 
+enum BookStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum BookAudioStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum BookOrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
 model User {
   id              String    @id @default(cuid())
   email           String    @unique
@@ -123,12 +143,14 @@ model User {
 
   otps             EmailOtp[]
   coursesCreated   Course[]          @relation("CourseCreatedBy")
+  booksCreated     Book[]            @relation("BookCreatedByAdmin")
   mediaCreated     MediaAsset[]      @relation("MediaCreatedBy")
   purchases        Purchase[]
   subscriptions    CourseSubscription[]
   lectureProgress  LectureProgress[]
   auditLogs        AdminAuditLog[]   @relation("AdminAuditUser")
   refreshTokens    RefreshToken[]
+  bookOrders       BookOrder[]       @relation("UserBookOrders")
 
   @@index([email])
   @@index([role])
@@ -301,6 +323,8 @@ model MediaAsset {
   courseFlyerAssets       CourseFlyerAsset[]
   lectureAudios           Lecture[]          @relation("LectureAudio")
   lectureVideos           Lecture[]          @relation("LectureVideo")
+  bookCoverImages         BookCoverImage[]   @relation("BookCoverImageAsset")
+  bookAudioFiles          BookAudioFile[]    @relation("BookAudioFileAsset")
 
   @@index([objectKey])
   @@index([mediaKind])
@@ -486,4 +510,107 @@ model CourseBatch {
   @@index([status])
   @@index([startDate])
   @@index([isActive])
+}
+
+model Book {
+  id          String     @id @default(cuid())
+  slug        String     @unique
+  title       String
+  description String?
+  status      BookStatus @default(DRAFT)
+  price       Decimal    @default(0) @db.Decimal(10, 2)
+  currency    String     @default("USD")
+
+  createdByAdminId String?
+  createdByAdmin   User?   @relation("BookCreatedByAdmin", fields: [createdByAdminId], references: [id], onDelete: SetNull)
+
+  publishedAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  coverImages BookCoverImage[]
+  audioFiles  BookAudioFile[]
+  orders      BookOrder[]
+
+  @@index([status])
+  @@index([deletedAt])
+  @@index([createdAt])
+}
+
+model BookCoverImage {
+  id           String     @id @default(cuid())
+  bookId       String
+  book         Book       @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  mediaAssetId String
+  mediaAsset   MediaAsset @relation("BookCoverImageAsset", fields: [mediaAssetId], references: [id], onDelete: Cascade)
+  displayOrder Int        @default(0)
+  createdAt    DateTime   @default(now())
+
+  @@unique([bookId, mediaAssetId])
+  @@index([bookId])
+}
+
+model BookAudioFile {
+  id              String          @id @default(cuid())
+  bookId          String
+  book            Book            @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  title           String
+  description     String?
+  audioOrder      Int
+  isPreviewFree   Boolean         @default(false)
+  status          BookAudioStatus @default(DRAFT)
+
+  audioMediaAssetId String?
+  audioMediaAsset   MediaAsset?  @relation("BookAudioFileAsset", fields: [audioMediaAssetId], references: [id], onDelete: SetNull)
+
+  durationSeconds Int?
+  deletedAt       DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@unique([bookId, audioOrder])
+  @@index([bookId])
+  @@index([status])
+  @@index([isPreviewFree])
+  @@index([deletedAt])
+}
+
+model BookOrder {
+  id      String          @id @default(cuid())
+  userId  String
+  user    User            @relation("UserBookOrders", fields: [userId], references: [id], onDelete: Cascade)
+  bookId  String
+  book    Book            @relation(fields: [bookId], references: [id])
+
+  status  BookOrderStatus @default(PENDING)
+
+  quantity    Int     @default(1)
+  unitPrice   Decimal @db.Decimal(10, 2)
+  totalAmount Decimal @db.Decimal(10, 2)
+  currency    String  @default("USD")
+
+  deliveryName       String
+  deliveryEmail      String
+  deliveryPhone      String
+  deliveryAddress    String
+  deliveryCity       String
+  deliveryState      String?
+  deliveryPostalCode String?
+  deliveryCountry    String  @default("Pakistan")
+  deliveryNotes      String?
+
+  adminNotes  String?
+
+  processedAt DateTime?
+  shippedAt   DateTime?
+  deliveredAt DateTime?
+  cancelledAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([bookId])
+  @@index([status])
+  @@index([createdAt])
 }

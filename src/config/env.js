@@ -51,6 +51,8 @@ const envSchema = z.object({
   UPLOADS_DIR: z.string().optional().default(""),
   SERVER_BASE_URL: z.string().url().default("http://localhost:5000"),
 
+  ADMIN_ORDER_EMAIL: z.string().email().optional().default(""),
+
   STRIPE_SECRET_KEY: z.string().optional().default(""),
   STRIPE_PUBLISHABLE_KEY: z.string().optional().default(""),
   STRIPE_WEBHOOK_SECRET: z.string().optional().default(""),

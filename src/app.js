@@ -19,6 +19,7 @@ import coursePublicRoutes from "./modules/courses/course.public.routes.js";
 import mediaUserRoutes from "./modules/media/media.user.routes.js";
 import paymentRoutes from "./modules/payments/payment.routes.js";
 import stripeWebhookRoutes from "./modules/payments/stripeWebhook.routes.js";
+import bookPublicRoutes from "./modules/books/book.public.routes.js";
 
 const app = express();
 
@@ -80,6 +81,7 @@ app.use("/api/tags", tagPublicRoutes);
 app.use("/api/courses", coursePublicRoutes);
 app.use("/api/lectures", mediaUserRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/books", bookPublicRoutes);
 
 app.use(notFoundMiddleware);
 app.use(errorMiddleware);
