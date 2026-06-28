@@ -28,6 +28,7 @@ import lectureAdminRoutes from "../lectures/lecture.admin.routes.js";
 import mediaAdminRoutes from "../media/media.admin.routes.js";
 import bookAdminRoutes from "../books/book.admin.routes.js";
 import bookOrderAdminRoutes from "../book-orders/book-order.admin.routes.js";
+import liveClassAdminRoutes from "../live-classes/liveClass.admin.routes.js";
 
 const router = Router();
 
@@ -53,5 +54,6 @@ router.use("/", lectureAdminRoutes);
 router.use("/media", mediaAdminRoutes);
 router.use("/books", bookAdminRoutes);
 router.use("/orders/books", bookOrderAdminRoutes);
+router.use("/live-classes", liveClassAdminRoutes);
 
 export default router;

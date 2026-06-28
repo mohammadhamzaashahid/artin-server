@@ -23,3 +23,10 @@ export const getSessionStatusSchema = z.object({
     sessionId: z.string().trim().min(1, "sessionId is required"),
   }),
 });
+
+export const createLiveClassCheckoutSessionSchema = z.object({
+  body: z.object({
+    liveClassId: z.string().min(1, "liveClassId is required"),
+    liveClassPriceId: z.string().min(1, "liveClassPriceId is required"),
+  }),
+});

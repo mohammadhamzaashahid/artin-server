@@ -85,6 +85,39 @@ export const getCourseAccessForUser = async ({ userId, courseId }) => {
   };
 };
 
+export const getLiveClassAccessForUser = async ({ userId, liveClassId }) => {
+  if (!userId || !liveClassId) {
+    return {
+      hasAccess: false,
+      accessType: "NONE",
+      reason: "AUTH_REQUIRED",
+    };
+  }
+
+  const purchase = await prisma.liveClassPurchase.findFirst({
+    where: {
+      userId,
+      liveClassId,
+      status: "PAID",
+    },
+    select: { id: true },
+  });
+
+  if (purchase) {
+    return {
+      hasAccess: true,
+      accessType: "PURCHASE",
+      reason: "ACTIVE_PURCHASE",
+    };
+  }
+
+  return {
+    hasAccess: false,
+    accessType: "NONE",
+    reason: "PAYMENT_REQUIRED",
+  };
+};
+
 export const buildLectureAccessView = ({ lecture, courseAccess }) => {
   const isPreviewFree = Boolean(lecture.isPreviewFree);
   const hasCourseAccess = Boolean(courseAccess?.hasAccess);

@@ -5,6 +5,7 @@ import { validate } from "../../middlewares/validate.middleware.js";
 import {
   createCheckoutSessionSchema,
   createCustomerPortalSessionSchema,
+  createLiveClassCheckoutSessionSchema,
   getSessionStatusSchema,
   listMyPaymentsSchema,
 } from "./payment.validation.js";
@@ -12,6 +13,9 @@ import {
 import {
   createCheckoutSessionController,
   createCustomerPortalSessionController,
+  createLiveClassCheckoutSessionController,
+  getMyAccessibleLiveClassesController,
+  getMyLiveClassPurchasesController,
   getSessionStatusController,
   listMyCoursesController,
   listMyPurchasesController,
@@ -39,5 +43,21 @@ router.get("/session-status", validate(getSessionStatusSchema), getSessionStatus
 router.get("/my-purchases", validate(listMyPaymentsSchema), listMyPurchasesController);
 router.get("/my-subscriptions", validate(listMyPaymentsSchema), listMySubscriptionsController);
 router.get("/my-courses", validate(listMyPaymentsSchema), listMyCoursesController);
+
+router.post(
+  "/live-classes/create-checkout-session",
+  validate(createLiveClassCheckoutSessionSchema),
+  createLiveClassCheckoutSessionController
+);
+router.get(
+  "/live-classes/my-purchases",
+  validate(listMyPaymentsSchema),
+  getMyLiveClassPurchasesController
+);
+router.get(
+  "/live-classes/my-classes",
+  validate(listMyPaymentsSchema),
+  getMyAccessibleLiveClassesController
+);
 
 export default router;

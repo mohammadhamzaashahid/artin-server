@@ -124,6 +124,12 @@ enum BookOrderStatus {
   CANCELLED
 }
 
+enum LiveClassStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
 model User {
   id              String    @id @default(cuid())
   email           String    @unique
@@ -141,16 +147,18 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  otps             EmailOtp[]
-  coursesCreated   Course[]          @relation("CourseCreatedBy")
-  booksCreated     Book[]            @relation("BookCreatedByAdmin")
-  mediaCreated     MediaAsset[]      @relation("MediaCreatedBy")
-  purchases        Purchase[]
-  subscriptions    CourseSubscription[]
-  lectureProgress  LectureProgress[]
-  auditLogs        AdminAuditLog[]   @relation("AdminAuditUser")
-  refreshTokens    RefreshToken[]
-  bookOrders       BookOrder[]       @relation("UserBookOrders")
+  otps                 EmailOtp[]
+  coursesCreated       Course[]            @relation("CourseCreatedBy")
+  liveClassesCreated   LiveClass[]         @relation("LiveClassCreatedBy")
+  booksCreated         Book[]              @relation("BookCreatedByAdmin")
+  mediaCreated         MediaAsset[]        @relation("MediaCreatedBy")
+  purchases            Purchase[]
+  subscriptions        CourseSubscription[]
+  liveClassPurchases   LiveClassPurchase[]
+  lectureProgress      LectureProgress[]
+  auditLogs            AdminAuditLog[]     @relation("AdminAuditUser")
+  refreshTokens        RefreshToken[]
+  bookOrders           BookOrder[]         @relation("UserBookOrders")
 
   @@index([email])
   @@index([role])
@@ -260,6 +268,7 @@ model Course {
   progress      LectureProgress[]
   flyerAssets   CourseFlyerAsset[]
   batches       CourseBatch[]
+  liveClasses   LiveClass[]
 
   @@index([status])
   @@index([categoryId])
@@ -317,14 +326,16 @@ model MediaAsset {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  courseThumbnails        Course[]           @relation("CourseThumbnail")
-  courseBanners           Course[]           @relation("CourseBanner")
-  courseOutlineDocuments  Course[]           @relation("CourseOutlineDocument")
+  courseThumbnails        Course[]              @relation("CourseThumbnail")
+  courseBanners           Course[]              @relation("CourseBanner")
+  courseOutlineDocuments  Course[]              @relation("CourseOutlineDocument")
   courseFlyerAssets       CourseFlyerAsset[]
-  lectureAudios           Lecture[]          @relation("LectureAudio")
-  lectureVideos           Lecture[]          @relation("LectureVideo")
-  bookCoverImages         BookCoverImage[]   @relation("BookCoverImageAsset")
-  bookAudioFiles          BookAudioFile[]    @relation("BookAudioFileAsset")
+  lectureAudios           Lecture[]             @relation("LectureAudio")
+  lectureVideos           Lecture[]             @relation("LectureVideo")
+  bookCoverImages         BookCoverImage[]      @relation("BookCoverImageAsset")
+  bookAudioFiles          BookAudioFile[]       @relation("BookAudioFileAsset")
+  liveClassBanners        LiveClass[]           @relation("LiveClassBanner")
+  liveClassMaterials      LiveClassMaterial[]
 
   @@index([objectKey])
   @@index([mediaKind])
@@ -613,4 +624,108 @@ model BookOrder {
   @@index([bookId])
   @@index([status])
   @@index([createdAt])
+}
+
+model LiveClass {
+  id          String          @id @default(cuid())
+  slug        String          @unique
+  title       String
+  description String?
+
+  startDate    DateTime
+  endDate      DateTime
+  timeDuration Int
+
+  joiningLink String?
+
+  status LiveClassStatus @default(DRAFT)
+
+  courseId String?
+  course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
+
+  bannerImageAssetId String?
+  bannerImageAsset   MediaAsset? @relation("LiveClassBanner", fields: [bannerImageAssetId], references: [id], onDelete: SetNull)
+
+  createdByAdminId String?
+  createdByAdmin   User?   @relation("LiveClassCreatedBy", fields: [createdByAdminId], references: [id], onDelete: SetNull)
+
+  publishedAt DateTime?
+  deletedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prices    LiveClassPrice[]
+  purchases LiveClassPurchase[]
+  materials LiveClassMaterial[]
+
+  @@index([status])
+  @@index([startDate])
+  @@index([courseId])
+  @@index([deletedAt])
+}
+
+model LiveClassMaterial {
+  id           String @id @default(cuid())
+  liveClassId  String
+  mediaAssetId String
+  displayOrder Int    @default(0)
+
+  createdAt DateTime @default(now())
+
+  liveClass  LiveClass  @relation(fields: [liveClassId], references: [id], onDelete: Cascade)
+  mediaAsset MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+
+  @@unique([liveClassId, mediaAssetId])
+  @@index([liveClassId])
+}
+
+model LiveClassPrice {
+  id          String  @id @default(cuid())
+  liveClassId String
+  amount      Decimal @db.Decimal(10, 2)
+  currency    String  @default("USD")
+
+  stripeProductId String?
+  stripePriceId   String? @unique
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  liveClass LiveClass          @relation(fields: [liveClassId], references: [id], onDelete: Cascade)
+  purchases LiveClassPurchase[]
+
+  @@index([liveClassId])
+  @@index([isActive])
+}
+
+model LiveClassPurchase {
+  id               String  @id @default(cuid())
+  userId           String
+  liveClassId      String
+  liveClassPriceId String?
+
+  provider PaymentProvider @default(STRIPE)
+
+  stripeCheckoutSessionId String? @unique
+  stripePaymentIntentId   String? @unique
+
+  amount   Decimal        @db.Decimal(10, 2)
+  currency String         @default("USD")
+  status   PurchaseStatus @default(PENDING)
+
+  purchasedAt DateTime?
+  refundedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  liveClass      LiveClass       @relation(fields: [liveClassId], references: [id], onDelete: Cascade)
+  liveClassPrice LiveClassPrice? @relation(fields: [liveClassPriceId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, liveClassId])
+  @@index([userId])
+  @@index([liveClassId])
+  @@index([status])
 }

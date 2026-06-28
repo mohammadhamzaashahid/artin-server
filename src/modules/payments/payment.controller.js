@@ -6,8 +6,11 @@ import ApiError from "../../utils/ApiError.js";
 import {
   createCheckoutSession,
   createCustomerPortalSession,
+  createLiveClassCheckoutSession,
   getCheckoutSessionStatus,
   getMyAccessibleCourses,
+  getMyAccessibleLiveClasses,
+  getMyLiveClassPurchases,
   listMyPurchases,
   listMySubscriptions,
   saveAndProcessStripeEvent,
@@ -88,6 +91,48 @@ export const getSessionStatusController = asyncHandler(async (req, res) => {
   return res
     .status(200)
     .json(new ApiResponse(200, result, "Session status fetched successfully"));
+});
+
+export const createLiveClassCheckoutSessionController = asyncHandler(async (req, res) => {
+  const { body } = req.validated;
+
+  const result = await createLiveClassCheckoutSession({
+    userId: req.user.id,
+    liveClassId: body.liveClassId,
+    liveClassPriceId: body.liveClassPriceId,
+  });
+
+  return res
+    .status(201)
+    .json(new ApiResponse(201, result, "Live class checkout session created successfully"));
+});
+
+export const getMyLiveClassPurchasesController = asyncHandler(async (req, res) => {
+  const { query } = req.validated;
+
+  const result = await getMyLiveClassPurchases({
+    userId: req.user.id,
+    page: query.page,
+    limit: query.limit,
+  });
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, result, "Live class purchases fetched successfully"));
+});
+
+export const getMyAccessibleLiveClassesController = asyncHandler(async (req, res) => {
+  const { query } = req.validated;
+
+  const result = await getMyAccessibleLiveClasses({
+    userId: req.user.id,
+    page: query.page,
+    limit: query.limit,
+  });
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, result, "Accessible live classes fetched successfully"));
 });
 
 export const stripeWebhookController = asyncHandler(async (req, res) => {
